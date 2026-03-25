@@ -1,34 +1,61 @@
-# Build stage
-FROM sbtscala/scala-sbt:eclipse-temurin-17.0.4_1.7.1_2.13.10 AS builder
+# =============================================================================
+# SnelNieuwsApi Dockerfile - Multi-stage build
+# =============================================================================
+
+# Stage 1: Builder
+FROM eclipse-temurin:17-jdk AS builder
+
+# Install sbt
+RUN apt-get update && \
+    apt-get install -y curl gnupg2 && \
+    echo "deb https://repo.scala-sbt.org/scalasbt/debian all main" | tee /etc/apt/sources.list.d/sbt.list && \
+    echo "deb https://repo.scala-sbt.org/scalasbt/debian /" | tee /etc/apt/sources.list.d/sbt_old.list && \
+    curl -sL "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x2EE0EA64E40A89B84B2DF73499E82A75642AC823" | apt-key add && \
+    apt-get update && \
+    apt-get install -y sbt && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# Copy build files
-COPY build.sbt .
-COPY project/ project/
-
-# Download dependencies
+# Cache dependencies
+COPY build.sbt /app/
+COPY project/build.properties /app/project/
+COPY project/plugins.sbt /app/project/
 RUN sbt update
 
-# Copy source code
-COPY src/ src/
-
-# Build the fat JAR
+# Copy source and build
+COPY . /app/
 RUN sbt assembly
 
-# Runtime stage
-FROM eclipse-temurin:17-jre-alpine
+# Stage 2: Runtime
+FROM eclipse-temurin:17-jre AS runtime
 
-WORKDIR /app
+LABEL org.opencontainers.image.title="snel-nieuws-api" \
+      org.opencontainers.image.description="SnelNieuws API Service" \
+      org.opencontainers.image.vendor="emudoi" \
+      com.emudoi.service="snel-nieuws-api" \
+      com.emudoi.environment="production"
 
-# Copy the fat JAR from builder
-COPY --from=builder /app/target/scala-2.13/snelnieuws-api.jar .
+# Create non-root user
+RUN groupadd -g 1001 emudoi && \
+    useradd -u 1001 -g emudoi -s /bin/false emudoi
 
-# Create webapp directory structure
-RUN mkdir -p src/main/webapp/WEB-INF
+# Create necessary directories
+RUN mkdir -p /var/log/emudoi /opt/snel-nieuws-api && \
+    chown -R emudoi:emudoi /var/log/emudoi /opt/snel-nieuws-api
+
+WORKDIR /opt/snel-nieuws-api
+
+# Copy the fat JAR from builder stage
+COPY --from=builder /app/target/scala-2.13/snelnieuws-api.jar /opt/snel-nieuws-api/app.jar
+RUN chown emudoi:emudoi /opt/snel-nieuws-api/app.jar
+
+USER emudoi
 
 EXPOSE 8080
 
-ENV PORT=8080
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+  CMD curl -sf http://localhost:8080/health || exit 1
 
-CMD ["java", "-jar", "snelnieuws-api.jar"]
+ENTRYPOINT ["java", "-jar", "app.jar"]

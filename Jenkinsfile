@@ -105,13 +105,6 @@ pipeline {
                         APP_NODE_HOST="65.109.234.130"
                         SSH_OPTS="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR"
 
-                        echo "[emudoi] Ensuring /opt/snel-nieuws-api exists on app node..."
-                        ssh ${SSH_OPTS} -i "${SSH_KEY_FILE}" root@${APP_NODE_HOST} \
-                            "mkdir -p /opt/snel-nieuws-api"
-
-                        echo "[emudoi] Copying docker-compose.yml to app node..."
-                        scp ${SSH_OPTS} -i "${SSH_KEY_FILE}" docker/docker-compose.yml root@${APP_NODE_HOST}:/opt/snel-nieuws-api/docker-compose.yml
-
                         echo "[emudoi] Pulling latest image on app node..."
                         ssh ${SSH_OPTS} -i "${SSH_KEY_FILE}" root@${APP_NODE_HOST} \
                             "echo '${GITHUB_TOKEN}' | docker login ghcr.io -u emudoi --password-stdin && \
