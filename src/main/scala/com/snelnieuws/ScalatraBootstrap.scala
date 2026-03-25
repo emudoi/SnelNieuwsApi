@@ -2,15 +2,30 @@ package com.snelnieuws
 
 import com.snelnieuws.api.NewsServlet
 import com.snelnieuws.db.Database
-import org.scalatra._
+import org.scalatra.LifeCycle
 import javax.servlet.ServletContext
+import org.slf4j.LoggerFactory
 
 class ScalatraBootstrap extends LifeCycle {
-  override def init(context: ServletContext): Unit = {
-    // Run Flyway database migrations
-    Database.migrate()
 
-    // Mount the API servlet
+  private val logger = LoggerFactory.getLogger(classOf[ScalatraBootstrap])
+
+  override def init(context: ServletContext): Unit = {
+    logger.info("Initializing snel-nieuws-api servlets...")
+
+    try {
+      Database.migrate()
+    } catch {
+      case e: Exception =>
+        logger.error("Database migration failed — app will start but DB features may be unavailable", e)
+    }
+
     context.mount(new NewsServlet, "/*")
+
+    logger.info("snel-nieuws-api servlets initialized successfully")
+  }
+
+  override def destroy(context: ServletContext): Unit = {
+    super.destroy(context)
   }
 }
