@@ -108,11 +108,11 @@ pipeline {
                         echo "[emudoi] Pulling latest image on app node..."
                         ssh ${SSH_OPTS} -i "${SSH_KEY_FILE}" root@${APP_NODE_HOST} \
                             "echo '${GITHUB_TOKEN}' | docker login ghcr.io -u emudoi --password-stdin && \
-                             docker compose -f /opt/snel-nieuws-api/docker-compose.yml pull"
+                             docker compose -f /opt/emudoi/docker-compose.yml pull snel-nieuws-api"
 
                         echo "[emudoi] Starting updated containers..."
                         ssh ${SSH_OPTS} -i "${SSH_KEY_FILE}" root@${APP_NODE_HOST} \
-                            "docker compose -f /opt/snel-nieuws-api/docker-compose.yml up -d"
+                            "docker compose -f /opt/emudoi/docker-compose.yml up -d snel-nieuws-api"
 
                         echo "[emudoi] Waiting for health check..."
                         sleep 15
