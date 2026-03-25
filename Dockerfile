@@ -47,9 +47,13 @@ RUN mkdir -p /var/log/emudoi /opt/snel-nieuws-api && \
 
 WORKDIR /opt/snel-nieuws-api
 
+# Create webapp directory structure for Scalatra
+RUN mkdir -p /opt/snel-nieuws-api/src/main/webapp/WEB-INF
+
 # Copy the fat JAR from builder stage
 COPY --from=builder /app/target/scala-2.13/snelnieuws-api.jar /opt/snel-nieuws-api/app.jar
-RUN chown emudoi:emudoi /opt/snel-nieuws-api/app.jar
+COPY --from=builder /app/src/main/webapp/WEB-INF/web.xml /opt/snel-nieuws-api/src/main/webapp/WEB-INF/web.xml
+RUN chown -R emudoi:emudoi /opt/snel-nieuws-api
 
 USER emudoi
 

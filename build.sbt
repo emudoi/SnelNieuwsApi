@@ -18,7 +18,7 @@ lazy val root = (project in file("."))
       // Jetty
       "org.eclipse.jetty" % "jetty-webapp" % "11.0.15",
       "org.eclipse.jetty" % "jetty-server" % "11.0.15",
-      "javax.servlet" % "javax.servlet-api" % "4.0.1" % "provided",
+      "javax.servlet" % "javax.servlet-api" % "4.0.1",
 
       // Doobie
       "org.tpolecat" %% "doobie-core" % DoobieVersion,
