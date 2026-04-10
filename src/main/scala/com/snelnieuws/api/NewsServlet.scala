@@ -3,7 +3,7 @@ package com.snelnieuws.api
 import org.scalatra._
 import org.scalatra.json._
 import org.json4s.{DefaultFormats, Formats}
-import com.snelnieuws.db.ArticleRepository
+import com.snelnieuws.service.ArticleService
 import com.snelnieuws.model.{ArticleCreate, NewsFetchResponse}
 
 class NewsServlet extends ScalatraServlet with JacksonJsonSupport {
@@ -20,12 +20,12 @@ class NewsServlet extends ScalatraServlet with JacksonJsonSupport {
     val limit = params.getOrElse("pageSize", "100").toInt
 
     val articles = if (query.isEmpty || query == "news") {
-      ArticleRepository.findAll(limit)
+      ArticleService.findAll(limit)
     } else {
       // First try category, then search
-      val byCategory = ArticleRepository.findByCategory(query, limit)
+      val byCategory = ArticleService.findByCategory(query, limit)
       if (byCategory.nonEmpty) byCategory
-      else ArticleRepository.search(query, limit)
+      else ArticleService.search(query, limit)
     }
 
     NewsFetchResponse(
@@ -42,9 +42,9 @@ class NewsServlet extends ScalatraServlet with JacksonJsonSupport {
     val limit = params.getOrElse("pageSize", "100").toInt
 
     val articles = if (category.isEmpty) {
-      ArticleRepository.findAll(limit)
+      ArticleService.findAll(limit)
     } else {
-      ArticleRepository.findByCategory(category, limit)
+      ArticleService.findByCategory(category, limit)
     }
 
     NewsFetchResponse(
@@ -57,14 +57,14 @@ class NewsServlet extends ScalatraServlet with JacksonJsonSupport {
   // POST /articles - Create new article
   post("/articles") {
     val article = parsedBody.extract[ArticleCreate]
-    val created = ArticleRepository.create(article)
+    val created = ArticleService.create(article)
     Created(created)
   }
 
   // GET /articles/:id - Get single article
   get("/articles/:id") {
     val id = params("id").toLong
-    ArticleRepository.findById(id) match {
+    ArticleService.findById(id) match {
       case Some(article) => article
       case None => NotFound(Map("error" -> "Article not found"))
     }
@@ -73,7 +73,7 @@ class NewsServlet extends ScalatraServlet with JacksonJsonSupport {
   // DELETE /articles/:id - Delete article
   delete("/articles/:id") {
     val id = params("id").toLong
-    val deleted = ArticleRepository.delete(id)
+    val deleted = ArticleService.delete(id)
     if (deleted > 0) NoContent()
     else NotFound(Map("error" -> "Article not found"))
   }

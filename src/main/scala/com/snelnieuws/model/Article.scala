@@ -2,8 +2,20 @@ package com.snelnieuws.model
 
 import java.time.Instant
 
-case class Article(
+case class ArticleRow(
   id: Long,
+  author: Option[String],
+  title: String,
+  description: Option[String],
+  url: String,
+  urlToImage: Option[String],
+  publishedAt: String,
+  content: Option[String],
+  category: Option[String]
+)
+
+case class Article(
+  id: String,
   author: Option[String],
   title: String,
   description: Option[String],
