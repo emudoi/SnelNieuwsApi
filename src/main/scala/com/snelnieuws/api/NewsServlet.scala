@@ -78,6 +78,11 @@ class NewsServlet extends ScalatraServlet with JacksonJsonSupport {
     else NotFound(Map("error" -> "Article not found"))
   }
 
+  // App config
+  get("/app/config") {
+    Map("minVersion" -> "1.2.0")
+  }
+
   // Health check
   get("/health") {
     Map("status" -> "ok", "service" -> "SnelNieuws API")
