@@ -3,7 +3,8 @@ package com.snelnieuws
 import com.snelnieuws.api.NewsServlet
 import com.snelnieuws.db.Database
 import com.snelnieuws.kafka.SummarizedImportKafkaConfig
-import com.snelnieuws.service.SummarizedArticleConsumer
+import com.snelnieuws.service.{ArticleCleanupScheduler, SummarizedArticleConsumer}
+import com.typesafe.config.ConfigFactory
 import org.scalatra.LifeCycle
 import javax.servlet.ServletContext
 import org.slf4j.LoggerFactory
@@ -12,6 +13,7 @@ class ScalatraBootstrap extends LifeCycle {
 
   private val logger = LoggerFactory.getLogger(classOf[ScalatraBootstrap])
   private var summarizedConsumer: Option[SummarizedArticleConsumer] = None
+  private var cleanupScheduler: Option[ArticleCleanupScheduler]      = None
 
   override def init(context: ServletContext): Unit = {
     logger.info("Initializing snel-nieuws-api servlets...")
@@ -26,7 +28,21 @@ class ScalatraBootstrap extends LifeCycle {
 
     context.mount(new NewsServlet, "/*")
 
-    val kafkaCfg = SummarizedImportKafkaConfig.load()
+    val rootCfg = ConfigFactory.load()
+
+    val cleanupCfg = rootCfg.getConfig("articles.cleanup")
+    if (cleanupCfg.getBoolean("enabled")) {
+      val scheduler = new ArticleCleanupScheduler(
+        retentionHours  = cleanupCfg.getLong("retention-hours"),
+        intervalMinutes = cleanupCfg.getLong("interval-minutes")
+      )
+      scheduler.start()
+      cleanupScheduler = Some(scheduler)
+    } else {
+      logger.info("Article cleanup scheduler is disabled (articles.cleanup.enabled=false)")
+    }
+
+    val kafkaCfg = SummarizedImportKafkaConfig.load(rootCfg)
     if (kafkaCfg.enabled) {
       try {
         val consumer = new SummarizedArticleConsumer(kafkaCfg)
@@ -46,6 +62,7 @@ class ScalatraBootstrap extends LifeCycle {
 
   override def destroy(context: ServletContext): Unit = {
     summarizedConsumer.foreach(_.stop())
+    cleanupScheduler.foreach(_.stop())
     super.destroy(context)
   }
 }

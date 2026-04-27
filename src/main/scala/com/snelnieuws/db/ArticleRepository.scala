@@ -70,6 +70,11 @@ object ArticleRepository {
     sql"DELETE FROM articles WHERE id = $id".update.run.transact(xa).unsafeRunSync()
   }
 
+  /** Delete articles whose `published_at` is older than `cutoff`. Returns row count. */
+  def deletePublishedBefore(cutoff: OffsetDateTime): Int = {
+    sql"DELETE FROM articles WHERE published_at < $cutoff".update.run.transact(xa).unsafeRunSync()
+  }
+
   /**
    * Insert-or-update an article keyed on `title`, using a summarized-article event
    * from the ingestion-api. Title is the dedup key — matches the upstream
