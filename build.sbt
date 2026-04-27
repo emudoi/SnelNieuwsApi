@@ -1,6 +1,8 @@
-val ScalatraVersion = "2.8.4"
-val DoobieVersion = "1.0.0-RC4"
-val FlywayVersion = "9.22.3"
+val ScalatraVersion     = "2.8.4"
+val DoobieVersion       = "1.0.0-RC4"
+val FlywayVersion       = "9.22.3"
+val KafkaClientsVersion = "3.9.0"
+val CirceVersion        = "0.14.6"
 
 ThisBuild / scalaVersion := "2.13.12"
 ThisBuild / organization := "com.snelnieuws"
@@ -23,6 +25,11 @@ lazy val root = (project in file("."))
       "com.typesafe"             % "config"                % "1.4.2",
       "ch.qos.logback"           % "logback-classic"       % "1.4.11",
       "org.flywaydb"             % "flyway-core"           % FlywayVersion,
+      // Kafka consumer for summarized-article events from emudoi-snelnieuws-ingestion-api
+      "org.apache.kafka"         % "kafka-clients"         % KafkaClientsVersion,
+      "io.circe"                %% "circe-core"            % CirceVersion,
+      "io.circe"                %% "circe-generic"         % CirceVersion,
+      "io.circe"                %% "circe-parser"          % CirceVersion,
       // Test
       "org.scalatra"            %% "scalatra-scalatest"    % ScalatraVersion % Test
     ),
