@@ -5,7 +5,8 @@ import io.circe.generic.semiauto._
 
 /**
  * Mirror of `SummarizedArticleExport` in emudoi-snelnieuws-ingestion-api.
- * Field shape must stay byte-compatible with the producer.
+ * `createdAt` is Option because older producer deployments omit it; we don't
+ * use it on the consumer side anyway — `publishedAt` is what lands in the table.
  */
 case class SummarizedArticleExport(
   author: Option[String],
@@ -14,7 +15,7 @@ case class SummarizedArticleExport(
   url: String,
   urlToImage: Option[String],
   publishedAt: String,
-  createdAt: String,
+  createdAt: Option[String],
   category: Option[String]
 )
 
