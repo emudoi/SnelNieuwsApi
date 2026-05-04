@@ -1,10 +1,15 @@
 // =============================================================================
-//  emudoi-snelnieuws-api — k3s pipeline (build → bootstrap → deploy)
+//  emudoi-snelnieuws-api — k3s pipeline (sbt → image → bootstrap → deploy)
 // =============================================================================
 //  Runs on the cluster's Jenkins via the kubernetes plugin. The agent pod has:
-//    - kaniko  : builds the image, pushes to GHCR (no Docker daemon needed)
+//    - sbt     : sbtscala/scala-sbt — runs `sbt assembly` to produce the fat JAR
+//    - kaniko  : bakes the slim runtime image (just COPYs the JAR), pushes GHCR
 //    - kubectl : alpine/k8s — kubectl + curl + jq for bootstrap + deploy
 //    - vault   : hashicorp/vault — Vault CLI for k8s-auth login + role mgmt
+//
+//  Splitting the sbt build out of the Dockerfile keeps the image build offline-
+//  safe (no apt-get, no Ubuntu mirror dependency) and produces a much smaller
+//  runtime image (JRE + JAR, no JDK or sbt cruft).
 //
 //  Bootstrap stage is fully idempotent: namespace, GHCR pull-secret, app SA,
 //  per-service Vault policy + k8s-auth role, GoDaddy A record. First run on
@@ -41,6 +46,15 @@ spec:
     - name: jnlp
       resources:
         requests: { cpu: 100m, memory: 256Mi }
+    - name: sbt
+      # JDK + sbt launcher; sbt itself reads project/build.properties and
+      # downloads the project's pinned sbt version (1.9.7) on first run.
+      image: sbtscala/scala-sbt:eclipse-temurin-17.0.15_6_1.12.11_2.13.18
+      command: ["cat"]
+      tty: true
+      resources:
+        requests: { cpu: 1, memory: 2Gi }
+        limits:   { memory: 4Gi }
     - name: kaniko
       image: gcr.io/kaniko-project/executor:v1.23.2-debug
       command: ["/busybox/cat"]
@@ -103,7 +117,22 @@ spec:
       }
     }
 
-    stage('Build & Push') {
+    stage('Build (sbt assembly)') {
+      when { branch 'main' }
+      steps {
+        container('sbt') {
+          sh '''
+            set -e
+            # -Dfile.encoding=UTF-8 avoids stray locale issues on minimal images.
+            # No daemon — short-lived agent, daemon shutdown noise is just clutter.
+            sbt -Dfile.encoding=UTF-8 -batch clean assembly
+            ls -lh target/scala-2.13/emudoi-snelnieuws-api.jar
+          '''
+        }
+      }
+    }
+
+    stage('Image (kaniko push)') {
       when { branch 'main' }
       steps {
         container('kaniko') {
