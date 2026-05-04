@@ -1,0 +1,24 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: snelnieuws-api
+  namespace: snelnieuws
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-production
+spec:
+  ingressClassName: traefik
+  tls:
+    - hosts:
+        - api.snel.v1.emudoi.com
+      secretName: snelnieuws-api-tls
+  rules:
+    - host: api.snel.v1.emudoi.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: snelnieuws-api
+                port:
+                  name: http

@@ -21,3 +21,7 @@ Thumbs.db
 emudoi_infra
 local_run.sh
 emudoi_infra_only
+
+# Vault seeding inputs (real secret values — never commit)
+secrets.yaml
+secrets.*.yaml

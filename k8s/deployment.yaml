@@ -1,0 +1,78 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: snelnieuws-api
+  namespace: snelnieuws
+  labels:
+    app.kubernetes.io/name: snelnieuws-api
+    app.kubernetes.io/managed-by: jenkins
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: snelnieuws-api
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: snelnieuws-api
+      annotations:
+        # Vault Agent Injector: render KV secret at /vault/secrets/app.env on
+        # pod start. Pod sources the file before exec'ing the JVM, so every
+        # value in `secret/data/snelnieuws/api` becomes an env var the app
+        # already reads (DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASSWORD,
+        # KAFKA_SUMMARIZED_IMPORT_ENABLED, etc.). Rotating a secret in
+        # Vault → restart pod → new values, no rebuild.
+        vault.hashicorp.com/agent-inject: "true"
+        vault.hashicorp.com/role: "snelnieuws-api"
+        vault.hashicorp.com/agent-inject-secret-app.env: "secret/data/snelnieuws/api"
+        vault.hashicorp.com/agent-inject-template-app.env: |
+          {{- with secret "secret/data/snelnieuws/api" -}}
+          {{- range $k, $v := .Data.data }}
+          export {{ $k }}={{ $v | toJSON }}
+          {{- end }}
+          {{- end }}
+    spec:
+      serviceAccountName: snelnieuws-api
+      imagePullSecrets:
+        - name: ghcr-creds
+      containers:
+        - name: app
+          image: IMAGE_PLACEHOLDER
+          imagePullPolicy: IfNotPresent
+          # Override entrypoint to source the Vault-rendered env file before
+          # launching the JVM. Image's default ENTRYPOINT is `java -jar app.jar`
+          # — we wrap that to pick up DB_*, KAFKA_*, etc.
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -e
+              if [ -f /vault/secrets/app.env ]; then
+                set -a
+                . /vault/secrets/app.env
+                set +a
+              fi
+              exec java -jar app.jar
+          ports:
+            - name: http
+              containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            timeoutSeconds: 5
+          resources:
+            requests:
+              cpu: 100m
+              memory: 512Mi
+            limits:
+              memory: 1Gi
