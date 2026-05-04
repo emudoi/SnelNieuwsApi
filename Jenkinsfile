@@ -1,21 +1,19 @@
 // =============================================================================
 //  emudoi-snelnieuws-api — k3s pipeline (sbt → image → bootstrap → deploy)
 // =============================================================================
-//  Runs on the cluster's Jenkins via the kubernetes plugin. The agent pod has:
-//    - sbt     : sbtscala/scala-sbt — runs `sbt assembly` to produce the fat JAR
-//    - kaniko  : bakes the slim runtime image (just COPYs the JAR), pushes GHCR
-//    - kubectl : alpine/k8s — kubectl + curl + jq for bootstrap + deploy
-//    - vault   : hashicorp/vault — Vault CLI for k8s-auth login + role mgmt
-//
-//  Splitting the sbt build out of the Dockerfile keeps the image build offline-
-//  safe (no apt-get, no Ubuntu mirror dependency) and produces a much smaller
-//  runtime image (JRE + JAR, no JDK or sbt cruft).
+//  Inherits the agent pod (sbt + kaniko + kubectl + vault containers and the
+//  shared dep cache PVC) from the cluster-wide `scala-build` JCasC pod
+//  template defined in emudoi-k3s-infra/ansible/roles/jenkins/. This file
+//  owns only the *stages* — what the build actually does for THIS service —
+//  not the toolchain shape. To bump JDK / sbt / kaniko versions, edit the
+//  template in emudoi-k3s-infra; this file picks it up on the next build.
 //
 //  Bootstrap stage is fully idempotent: namespace, GHCR pull-secret, app SA,
 //  per-service Vault policy + k8s-auth role, GoDaddy A record. First run on
 //  a new repo creates them; subsequent runs no-op.
 //
 //  Required cluster prerequisites (one-time, set by emudoi-k3s-infra):
+//    - `scala-build` JCasC pod template registered with Jenkins
 //    - Vault Agent Injector running in `vault` namespace
 //    - Vault kubernetes auth method enabled
 //    - Vault role `jenkins-deployer` bound to jenkins/jenkins-agent SAs
@@ -33,56 +31,7 @@
 pipeline {
   agent {
     kubernetes {
-      // No defaultContainer — workspace is owned by the jnlp container's
-      // jenkins user (UID 1000); running scripts in another container as
-      // a different UID hits git's safe.directory check. Each stage below
-      // explicitly picks its container.
-      yaml '''
-apiVersion: v1
-kind: Pod
-spec:
-  serviceAccountName: jenkins
-  containers:
-    - name: jnlp
-      resources:
-        requests: { cpu: 100m, memory: 256Mi }
-    - name: sbt
-      # JDK + sbt launcher; sbt itself reads project/build.properties and
-      # downloads the project's pinned sbt version (1.9.7) on first run.
-      # Requests are minimal so the pod schedules on a 2-CPU node alongside
-      # the other containers; limits are generous because assembly bursts.
-      # sbt and kaniko run sequentially, so only one peaks at a time.
-      image: sbtscala/scala-sbt:eclipse-temurin-17.0.15_6_1.12.11_2.13.18
-      command: ["cat"]
-      tty: true
-      resources:
-        requests: { cpu: 200m, memory: 1Gi }
-        limits:   { cpu: '1500m', memory: 3Gi }
-    - name: kaniko
-      image: gcr.io/kaniko-project/executor:v1.23.2-debug
-      command: ["/busybox/cat"]
-      tty: true
-      resources:
-        requests: { cpu: 200m, memory: 512Mi }
-        limits:   { cpu: '1', memory: 2Gi }
-      volumeMounts:
-        - { name: docker-config, mountPath: /kaniko/.docker }
-    - name: kubectl
-      image: alpine/k8s:1.31.0
-      command: ["cat"]
-      tty: true
-      resources:
-        requests: { cpu: 50m, memory: 128Mi }
-    - name: vault
-      image: hashicorp/vault:1.18
-      command: ["cat"]
-      tty: true
-      resources:
-        requests: { cpu: 50m, memory: 64Mi }
-  volumes:
-    - name: docker-config
-      emptyDir: {}
-'''
+      inheritFrom 'scala-build'
     }
   }
 
