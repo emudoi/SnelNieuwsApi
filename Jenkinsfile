@@ -33,7 +33,7 @@ pipeline {
 apiVersion: v1
 kind: Pod
 spec:
-  serviceAccountName: jenkins-agent
+  serviceAccountName: jenkins
   containers:
     - name: jnlp
       resources:
