@@ -114,19 +114,21 @@ EOF
     stage('Bootstrap (cluster + Vault + DNS)') {
       when { branch 'main' }
       steps {
-        // Login to Vault (k8s auth) and dump the token to a shared file the
-        // kubectl container can read for subsequent API calls.
+        // Login to Vault (k8s auth) and dump the token to the Jenkins
+        // workspace so subsequent containers in this same pod can read it.
+        // /tmp is per-container, but ${WORKSPACE} is auto-mounted by the
+        // kubernetes plugin into every container at the same path.
         container('vault') {
           sh '''
             export VAULT_ADDR=${VAULT_ADDR}
             VAULT_TOKEN=$(vault write -field=token auth/kubernetes/login \
                             role=jenkins-deployer \
                             jwt=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token))
-            echo -n "$VAULT_TOKEN" > /tmp/vault-token
-            chmod 600 /tmp/vault-token
+            echo -n "$VAULT_TOKEN" > ${WORKSPACE}/.vault-token
+            chmod 600 ${WORKSPACE}/.vault-token
 
             # Per-service ACL policy: read-only on this service's KV path.
-            cat > /tmp/svc-policy.hcl <<EOF
+            cat > ${WORKSPACE}/.svc-policy.hcl <<EOF
 path "${VAULT_PATH}" {
   capabilities = ["read"]
 }
@@ -134,7 +136,7 @@ path "${VAULT_PATH}/*" {
   capabilities = ["read"]
 }
 EOF
-            VAULT_TOKEN=$VAULT_TOKEN vault policy write ${VAULT_POLICY} /tmp/svc-policy.hcl
+            VAULT_TOKEN=$VAULT_TOKEN vault policy write ${VAULT_POLICY} ${WORKSPACE}/.svc-policy.hcl
 
             # Per-service k8s-auth role: bind <ns>/<sa> → policy.
             VAULT_TOKEN=$VAULT_TOKEN vault write auth/kubernetes/role/${VAULT_ROLE} \
@@ -149,7 +151,7 @@ EOF
           withCredentials([string(credentialsId: 'github-token-secret', variable: 'GHCR_TOKEN')]) {
             sh '''
               set -e
-              VAULT_TOKEN=$(cat /tmp/vault-token)
+              VAULT_TOKEN=$(cat ${WORKSPACE}/.vault-token)
 
               # 1. Namespace + app ServiceAccount (idempotent via apply).
               kubectl create namespace ${NAMESPACE} \
