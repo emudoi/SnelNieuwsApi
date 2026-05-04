@@ -49,19 +49,22 @@ spec:
     - name: sbt
       # JDK + sbt launcher; sbt itself reads project/build.properties and
       # downloads the project's pinned sbt version (1.9.7) on first run.
+      # Requests are minimal so the pod schedules on a 2-CPU node alongside
+      # the other containers; limits are generous because assembly bursts.
+      # sbt and kaniko run sequentially, so only one peaks at a time.
       image: sbtscala/scala-sbt:eclipse-temurin-17.0.15_6_1.12.11_2.13.18
       command: ["cat"]
       tty: true
       resources:
-        requests: { cpu: 1, memory: 2Gi }
-        limits:   { memory: 4Gi }
+        requests: { cpu: 200m, memory: 1Gi }
+        limits:   { cpu: '1500m', memory: 3Gi }
     - name: kaniko
       image: gcr.io/kaniko-project/executor:v1.23.2-debug
       command: ["/busybox/cat"]
       tty: true
       resources:
-        requests: { cpu: 500m, memory: 1Gi }
-        limits:   { memory: 3Gi }
+        requests: { cpu: 200m, memory: 512Mi }
+        limits:   { cpu: '1', memory: 2Gi }
       volumeMounts:
         - { name: docker-config, mountPath: /kaniko/.docker }
     - name: kubectl
