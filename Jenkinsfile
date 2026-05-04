@@ -9,20 +9,20 @@
 //  template in emudoi-k3s-infra; this file picks it up on the next build.
 //
 //  Bootstrap stage is fully idempotent: namespace, GHCR pull-secret, app SA,
-//  per-service Vault policy + k8s-auth role, GoDaddy A record. First run on
-//  a new repo creates them; subsequent runs no-op.
+//  per-service Vault policy + k8s-auth role. First run on a new repo creates
+//  them; subsequent runs no-op. No DNS work — the cluster's wildcard A record
+//  *.v1.emudoi.com (managed by the infra repo's deploy.yml) covers every
+//  service hostname for free.
 //
-//  Required cluster prerequisites (one-time, set by emudoi-k3s-infra):
+//  Required cluster prerequisites (set by emudoi-k3s-infra; zero per-service
+//  config — adding a new service is just dropping a Jenkinsfile + k8s/ dir):
 //    - `scala-build` JCasC pod template registered with Jenkins
 //    - Vault Agent Injector running in `vault` namespace
-//    - Vault kubernetes auth method enabled
-//    - Vault role `jenkins-deployer` bound to jenkins/jenkins-agent SAs
+//    - Vault kubernetes auth method enabled, jenkins-deployer role bound
 //    - Jenkins SAs cluster-admin
-//
-//  Required Vault paths (seed once via bin/seed-vault.sh):
-//    - secret/data/_global/godaddy { api_key, api_secret }
-//    - secret/data/snelnieuws/api  { DB_HOST, DB_PORT, DB_NAME, DB_USER,
-//                                     DB_PASSWORD, KAFKA_SUMMARIZED_IMPORT_ENABLED }
+//    - DB credentials at secret/<service-vault-path> auto-seeded by the
+//      infra repo's postgres role (no manual `vault kv put` ever)
+//    - *.v1.emudoi.com wildcard A record for cluster-wide hostname routing
 //
 //  Required Jenkins credentials (already in JCasC):
 //    - github-token-secret : GHCR push PAT
@@ -111,21 +111,21 @@ EOF
       }
     }
 
-    stage('Bootstrap (cluster + Vault + DNS)') {
+    stage('Bootstrap (Vault auth + namespace + GHCR pull-secret)') {
       when { branch 'main' }
       steps {
-        // Login to Vault (k8s auth) and dump the token to the Jenkins
-        // workspace so subsequent containers in this same pod can read it.
-        // /tmp is per-container, but ${WORKSPACE} is auto-mounted by the
-        // kubernetes plugin into every container at the same path.
+        // Wire Vault: per-service policy + k8s-auth role so the pod's Vault
+        // Agent Injector can read THIS service's KV path. DNS isn't here —
+        // the cluster's *.v1.emudoi.com wildcard A record (managed by infra
+        // repo's deploy.yml) covers every service hostname for free.
+        // DB credentials at secret/<vault_path> are seeded by the infra
+        // postgres role; this stage doesn't touch them.
         container('vault') {
           sh '''
             export VAULT_ADDR=${VAULT_ADDR}
             VAULT_TOKEN=$(vault write -field=token auth/kubernetes/login \
                             role=jenkins-deployer \
                             jwt=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token))
-            echo -n "$VAULT_TOKEN" > ${WORKSPACE}/.vault-token
-            chmod 600 ${WORKSPACE}/.vault-token
 
             # Per-service ACL policy: read-only on this service's KV path.
             cat > ${WORKSPACE}/.svc-policy.hcl <<EOF
@@ -146,55 +146,20 @@ EOF
               ttl=1h
           '''
         }
-        // Cluster bootstrap + DNS via the alpine/k8s container.
+        // Namespace + app SA + GHCR pull-secret (idempotent).
         container('kubectl') {
           withCredentials([string(credentialsId: 'github-token-secret', variable: 'GHCR_TOKEN')]) {
             sh '''
               set -e
-              VAULT_TOKEN=$(cat ${WORKSPACE}/.vault-token)
-
-              # 1. Namespace + app ServiceAccount (idempotent via apply).
               kubectl create namespace ${NAMESPACE} \
                 --dry-run=client -o yaml | kubectl apply -f -
               kubectl -n ${NAMESPACE} create serviceaccount ${SERVICE} \
                 --dry-run=client -o yaml | kubectl apply -f -
-
-              # 2. GHCR pull secret in the target namespace, sourced from the
-              #    same PAT JCasC already gave Jenkins. apply --dry-run=client
-              #    pattern keeps it idempotent across re-runs and PAT rotations.
               kubectl -n ${NAMESPACE} create secret docker-registry ghcr-creds \
                 --docker-server=ghcr.io \
                 --docker-username=emudoi \
                 --docker-password="${GHCR_TOKEN}" \
                 --dry-run=client -o yaml | kubectl apply -f -
-
-              # 3. DNS — pull GoDaddy creds from Vault, ensure A record points
-              #    at the cluster's public IP. CLUSTER_IP comes from the
-              #    well-known `kube.emudoi.com` record (already managed by the
-              #    infra repo's deploy.yml, points at the control plane).
-              GD_KEY=$(curl -sf -H "X-Vault-Token: ${VAULT_TOKEN}" \
-                        "${VAULT_ADDR}/v1/secret/data/_global/godaddy" \
-                        | jq -r '.data.data.api_key')
-              GD_SECRET=$(curl -sf -H "X-Vault-Token: ${VAULT_TOKEN}" \
-                           "${VAULT_ADDR}/v1/secret/data/_global/godaddy" \
-                           | jq -r '.data.data.api_secret')
-              if [ -z "$GD_KEY" ] || [ "$GD_KEY" = "null" ]; then
-                echo "ERROR: secret/data/_global/godaddy missing or has no api_key." >&2
-                echo "Seed it once via bin/seed-vault.sh on a workstation:" >&2
-                echo "  _global/godaddy:" >&2
-                echo "    api_key: <godaddy api key>" >&2
-                echo "    api_secret: <godaddy api secret>" >&2
-                exit 1
-              fi
-              CLUSTER_IP=$(getent hosts kube.${DOMAIN} | awk '{print $1}')
-              [ -n "$CLUSTER_IP" ] || { echo "Failed to resolve kube.${DOMAIN}" >&2; exit 1; }
-              SUBNAME=${HOSTNAME%.${DOMAIN}}
-              echo "Ensuring DNS: ${HOSTNAME} → ${CLUSTER_IP}"
-              curl -sf -X PUT \
-                "https://api.godaddy.com/v1/domains/${DOMAIN}/records/A/${SUBNAME}" \
-                -H "Authorization: sso-key ${GD_KEY}:${GD_SECRET}" \
-                -H 'Content-Type: application/json' \
-                -d "[{\\"data\\":\\"${CLUSTER_IP}\\",\\"ttl\\":600}]"
             '''
           }
         }

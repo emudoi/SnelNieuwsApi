@@ -19,9 +19,10 @@ spec:
         # Vault Agent Injector: render KV secret at /vault/secrets/app.env on
         # pod start. Pod sources the file before exec'ing the JVM, so every
         # value in `secret/data/snelnieuws/api` becomes an env var the app
-        # already reads (DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASSWORD,
-        # KAFKA_SUMMARIZED_IMPORT_ENABLED, etc.). Rotating a secret in
-        # Vault → restart pod → new values, no rebuild.
+        # already reads. DB_* keys at that path are auto-seeded by the infra
+        # repo's postgres role; non-secret config (KAFKA_*, etc.) lives in
+        # the env block below, not Vault. Rotating a secret in Vault →
+        # restart pod → new values, no rebuild.
         vault.hashicorp.com/agent-inject: "true"
         vault.hashicorp.com/role: "snelnieuws-api"
         vault.hashicorp.com/agent-inject-secret-app.env: "secret/data/snelnieuws/api"
@@ -52,6 +53,9 @@ spec:
                 set +a
               fi
               exec java -jar app.jar
+          env:
+            - name: KAFKA_SUMMARIZED_IMPORT_ENABLED
+              value: "false"
           ports:
             - name: http
               containerPort: 8080
