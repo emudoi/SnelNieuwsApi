@@ -28,7 +28,10 @@
 pipeline {
   agent {
     kubernetes {
-      defaultContainer 'kubectl'
+      // No defaultContainer — workspace is owned by the jnlp container's
+      // jenkins user (UID 1000); running scripts in another container as
+      // a different UID hits git's safe.directory check. Each stage below
+      // explicitly picks its container.
       yaml '''
 apiVersion: v1
 kind: Pod
@@ -90,7 +93,10 @@ spec:
       steps {
         checkout scm
         script {
-          env.GIT_SHORT_SHA = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
+          // env.GIT_COMMIT is populated by `checkout scm`; take the first 7
+          // chars instead of shelling out to git (which would need careful
+          // container/UID handling for the workspace).
+          env.GIT_SHORT_SHA = (env.GIT_COMMIT ?: '').take(7)
           env.IMAGE_TAG     = env.GIT_SHORT_SHA
           echo "Building ${IMAGE_REPO}:${IMAGE_TAG}"
         }
