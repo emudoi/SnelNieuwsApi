@@ -1,0 +1,40 @@
+# Per-service provisioning manifest. Argo CD applies this as a Sync hook;
+# the workflow runs the shared `provision-service` ClusterWorkflowTemplate
+# (defined in k3s-infra ansible/roles/argo_workflows/templates/) which:
+#   - creates the Postgres role + database (idempotent)
+#   - writes DB_* keys to secret/<vault-path> in Vault
+#   - writes the Vault read policy + kubernetes auth role bound to this
+#     deployment's ServiceAccount
+#
+# Replaces the entries this service used to need in
+# k3s-infra/ansible/roles/{postgresql,vault}/defaults/main.yml.
+#
+# `BeforeHookCreation` deletes the previous Workflow run before each new
+# sync re-creates it, so the manifest stays the source of truth and we
+# always have one inspectable run object.
+apiVersion: argoproj.io/v1alpha1
+kind: Workflow
+metadata:
+  name: provision-snelnieuws-api
+  namespace: argo-workflows
+  annotations:
+    argocd.argoproj.io/hook: Sync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+spec:
+  workflowTemplateRef:
+    name: provision-service
+    clusterScope: true
+  arguments:
+    parameters:
+      - name: db
+        value: snelnieuws_api
+      - name: db-user
+        value: snelnieuws_api
+      - name: vault-path
+        value: snelnieuws/api
+      - name: vault-role
+        value: emudoi-snelnieuws-api
+      - name: namespace
+        value: emudoi-snelnieuws-api
+      - name: service-account
+        value: emudoi-snelnieuws-api
