@@ -1,0 +1,3 @@
+kustomize:
+  images:
+  - ghcr.io/emudoi/emudoi-snelnieuws-api:main@sha256:763d00256c8f135ef497e08cd794f44e323d004b73503590dc70bed914f5ce14
