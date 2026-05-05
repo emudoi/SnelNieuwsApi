@@ -1,0 +1,20 @@
+# Kustomize structure required so argocd-image-updater (which only supports
+# Kustomize and Helm sources) can rewrite the deployment image when a new
+# digest lands on ghcr.io/emudoi/emudoi-snelnieuws-api:main. Without this,
+# Argo CD treats k8s/ as a plain Directory source and image-updater skips
+# the Application with "not of supported source type", leaving pods stuck
+# on whatever digest kubelet first cached.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - serviceaccount.yaml
+  - deployment.yaml
+  - service.yaml
+  - ingress.yaml
+# image-updater appends/updates the entry below with `digest: sha256:...`
+# whenever it observes a new digest on the watched tag. Kept here as a
+# single-source-of-truth for the deployed image so manual edits stay in
+# this file rather than spread across overlays.
+images:
+  - name: ghcr.io/emudoi/emudoi-snelnieuws-api
+    newTag: main
