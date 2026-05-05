@@ -2,10 +2,10 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: snelnieuws-api
-  namespace: snelnieuws
+  namespace: emudoi-snelnieuws-api
   labels:
     app.kubernetes.io/name: snelnieuws-api
-    app.kubernetes.io/managed-by: jenkins
+    app.kubernetes.io/managed-by: argocd
 spec:
   replicas: 1
   selector:
@@ -24,7 +24,7 @@ spec:
         # the env block below, not Vault. Rotating a secret in Vault →
         # restart pod → new values, no rebuild.
         vault.hashicorp.com/agent-inject: "true"
-        vault.hashicorp.com/role: "snelnieuws-api"
+        vault.hashicorp.com/role: "emudoi-snelnieuws-api"
         vault.hashicorp.com/agent-inject-secret-app.env: "secret/data/snelnieuws/api"
         vault.hashicorp.com/agent-inject-template-app.env: |
           {{- with secret "secret/data/snelnieuws/api" -}}
@@ -42,12 +42,17 @@ spec:
           {{ .Data.data.credentials_json }}
           {{- end }}
     spec:
-      serviceAccountName: snelnieuws-api
+      serviceAccountName: emudoi-snelnieuws-api
       imagePullSecrets:
         - name: ghcr-creds
       containers:
         - name: app
-          image: IMAGE_PLACEHOLDER
+          # `:main` is a moving tag — argocd-image-updater notices new
+          # digests pushed by the build pipeline and writes the resolved
+          # `@sha256:...` back to `.argocd-source-emudoi-snelnieuws-api.yaml`
+          # in this repo's main branch. Argo CD then syncs the new digest
+          # into this Deployment.
+          image: ghcr.io/emudoi/emudoi-snelnieuws-api:main
           imagePullPolicy: IfNotPresent
           # Override entrypoint to source the Vault-rendered env file before
           # launching the JVM. Image's default ENTRYPOINT is `java -jar app.jar`
