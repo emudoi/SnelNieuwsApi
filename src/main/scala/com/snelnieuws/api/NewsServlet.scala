@@ -3,10 +3,18 @@ package com.snelnieuws.api
 import org.scalatra._
 import org.scalatra.json._
 import org.json4s.{DefaultFormats, Formats}
-import com.snelnieuws.service.ArticleService
-import com.snelnieuws.model.{ArticleCreate, NewsFetchResponse}
+import com.snelnieuws.service.{ArticleService, FirebaseMessagingService}
+import com.snelnieuws.db.{ArticleRepository, NotificationDispatchRepository, NotificationSubscriptionRepository}
+import com.snelnieuws.model.{
+  ArticleCreate,
+  DispatchResponse,
+  NewsFetchResponse,
+  SubscribeRequest
+}
 
-class NewsServlet extends ScalatraServlet with JacksonJsonSupport {
+class NewsServlet(notificationsEnabled: Boolean, notificationsApiKey: String)
+    extends ScalatraServlet
+    with JacksonJsonSupport {
   protected implicit lazy val jsonFormats: Formats = DefaultFormats
 
   before() {
@@ -87,6 +95,75 @@ class NewsServlet extends ScalatraServlet with JacksonJsonSupport {
   // App config
   get("/app/config") {
     Map("minVersion" -> "1.2.0")
+  }
+
+  // POST /notifications/subscribe — called by the iOS app on first launch
+  // (and on any later frequency change or token rotation). Idempotent upsert
+  // keyed on deviceId. No auth: this is keyed by the device's stable UUID.
+  post("/notifications/subscribe") {
+    val req = parsedBody.extract[SubscribeRequest]
+    if (req.deviceId.trim.isEmpty || req.fcmToken.trim.isEmpty) {
+      BadRequest(Map("error" -> "deviceId and fcmToken are required"))
+    } else if (req.frequency < 1 || req.frequency > 4) {
+      BadRequest(Map("error" -> "frequency must be between 1 and 4"))
+    } else {
+      NotificationSubscriptionRepository.upsert(req.deviceId, req.fcmToken, req.frequency)
+      Map("ok" -> true)
+    }
+  }
+
+  // POST /notifications/dispatch — called by Airflow with no body. Counts
+  // articles published since the last dispatch for this frequency tier and
+  // multicasts a generic "X new articles" message. Each call inserts an
+  // audit row in `notification_dispatches`. Optional query param
+  // `frequency` (1–4) filters subscribers AND scopes the "since last
+  // dispatch" lookup to that tier; omit to fan out to all.
+  // Auth via X-API-Key header.
+  post("/notifications/dispatch") {
+    if (!notificationsEnabled) {
+      ServiceUnavailable(Map("error" -> "notifications disabled"))
+    } else {
+      val provided = Option(request.getHeader("X-API-Key")).getOrElse("")
+      if (notificationsApiKey.isEmpty || provided != notificationsApiKey) {
+        Unauthorized(Map("error" -> "invalid or missing X-API-Key"))
+      } else {
+        val frequencyOpt = params.get("frequency").flatMap(_.toIntOption)
+        if (params.get("frequency").isDefined && frequencyOpt.isEmpty) {
+          BadRequest(Map("error" -> "frequency must be a number"))
+        } else if (frequencyOpt.exists(f => f < 1 || f > 4)) {
+          BadRequest(Map("error" -> "frequency must be between 1 and 4"))
+        } else {
+          val lastAsOf    = NotificationDispatchRepository.findLastAsOfArticleId(frequencyOpt)
+          val newArticles = ArticleRepository.countSinceId(lastAsOf)
+          val currentMax  = ArticleRepository.latestId()
+
+          val title = if (newArticles == 1) "1 new article" else s"$newArticles new articles"
+          val body  = "Check them out in Snel Nieuws"
+
+          val (sent, failed) =
+            if (newArticles == 0) (0, 0)
+            else {
+              val tokens = frequencyOpt match {
+                case Some(f) => NotificationSubscriptionRepository.findTokensByFrequency(f)
+                case None    => NotificationSubscriptionRepository.findAllTokens()
+              }
+              FirebaseMessagingService.sendBatch(tokens, title, body, Map.empty)
+            }
+
+          NotificationDispatchRepository.recordDispatch(
+            frequency     = frequencyOpt,
+            asOfArticleId = currentMax,
+            newArticles   = newArticles,
+            sent          = sent,
+            failed        = failed,
+            title         = title,
+            body          = body
+          )
+
+          DispatchResponse(sent, failed, newArticles)
+        }
+      }
+    }
   }
 
   // Health check

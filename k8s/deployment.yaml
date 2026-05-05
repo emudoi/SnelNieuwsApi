@@ -32,6 +32,15 @@ spec:
           export {{ $k }}={{ $v | toJSON }}
           {{- end }}
           {{- end }}
+        # Firebase service-account JSON, rendered verbatim to
+        # /vault/secrets/firebase-credentials.json (path expected by
+        # application.conf -> notifications.firebase-credentials-path).
+        # Stored at secret/snelnieuws/api/firebase under key `credentials_json`.
+        vault.hashicorp.com/agent-inject-secret-firebase-credentials.json: "secret/data/snelnieuws/api/firebase"
+        vault.hashicorp.com/agent-inject-template-firebase-credentials.json: |
+          {{- with secret "secret/data/snelnieuws/api/firebase" -}}
+          {{ .Data.data.credentials_json }}
+          {{- end }}
     spec:
       serviceAccountName: snelnieuws-api
       imagePullSecrets:

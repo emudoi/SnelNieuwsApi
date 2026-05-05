@@ -75,6 +75,23 @@ object ArticleRepository {
     sql"DELETE FROM articles WHERE published_at < $cutoff".update.run.transact(xa).unsafeRunSync()
   }
 
+  /** Count articles whose id is greater than `sinceId`. When `sinceId` is None
+   *  (no prior dispatch), counts all articles in the table.
+   */
+  def countSinceId(sinceId: Option[Long]): Int = {
+    val q = sinceId match {
+      case Some(id) => sql"SELECT COUNT(*) FROM articles WHERE id > $id"
+      case None     => sql"SELECT COUNT(*) FROM articles"
+    }
+    q.query[Int].unique.transact(xa).unsafeRunSync()
+  }
+
+  /** Largest article id currently in the table, or None if empty. */
+  def latestId(): Option[Long] = {
+    sql"SELECT MAX(id) FROM articles"
+      .query[Option[Long]].unique.transact(xa).unsafeRunSync()
+  }
+
   /** Distinct non-null, non-empty categories that currently have at least one article. */
   def findDistinctCategories(): List[String] = {
     sql"""

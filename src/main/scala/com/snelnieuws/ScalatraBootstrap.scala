@@ -3,11 +3,13 @@ package com.snelnieuws
 import com.snelnieuws.api.NewsServlet
 import com.snelnieuws.db.Database
 import com.snelnieuws.kafka.SummarizedImportKafkaConfig
-import com.snelnieuws.service.{ArticleCleanupScheduler, SummarizedArticleConsumer}
+import com.snelnieuws.service.{ArticleCleanupScheduler, FirebaseMessagingService, SummarizedArticleConsumer}
 import com.typesafe.config.ConfigFactory
 import org.scalatra.LifeCycle
 import javax.servlet.ServletContext
 import org.slf4j.LoggerFactory
+
+import java.nio.file.{Files, Paths}
 
 class ScalatraBootstrap extends LifeCycle {
 
@@ -26,9 +28,31 @@ class ScalatraBootstrap extends LifeCycle {
         throw e
     }
 
-    context.mount(new NewsServlet, "/*")
-
     val rootCfg = ConfigFactory.load()
+
+    val notifCfg     = rootCfg.getConfig("notifications")
+    val notifEnabled = notifCfg.getBoolean("enabled")
+    val notifApiKey  = notifCfg.getString("api-key")
+
+    if (notifEnabled) {
+      val credsPath = notifCfg.getString("firebase-credentials-path")
+      if (Files.exists(Paths.get(credsPath))) {
+        try {
+          FirebaseMessagingService.init(credsPath)
+        } catch {
+          case e: Exception =>
+            // Don't crash the API — subscribe still works; dispatch will report
+            // failures until init succeeds (e.g. on the next deploy/restart).
+            logger.error(s"Failed to initialize Firebase Admin SDK from $credsPath: ${e.getMessage}", e)
+        }
+      } else {
+        logger.warn(s"Notifications enabled but Firebase credentials not found at $credsPath — dispatch will be a no-op")
+      }
+    } else {
+      logger.info("Notifications are disabled (notifications.enabled=false)")
+    }
+
+    context.mount(new NewsServlet(notifEnabled, notifApiKey), "/*")
 
     val cleanupCfg = rootCfg.getConfig("articles.cleanup")
     if (cleanupCfg.getBoolean("enabled")) {
