@@ -3,14 +3,15 @@ kind: Ingress
 metadata:
   name: snelnieuws-api
   namespace: emudoi-snelnieuws-api
-  annotations:
-    cert-manager.io/cluster-issuer: letsencrypt-production
+  # No cert-manager annotation — the cluster-wide wildcard cert
+  # (issued by k3s-infra's wildcard_cert role via DNS-01, mirrored
+  # into every namespace by Reflector) covers *.snel.v1.emudoi.com.
 spec:
   ingressClassName: traefik
   tls:
     - hosts:
         - api.snel.v1.emudoi.com
-      secretName: snelnieuws-api-tls
+      secretName: wildcard-tls
   rules:
     - host: api.snel.v1.emudoi.com
       http:
