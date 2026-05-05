@@ -1,6 +1,14 @@
-# Per-service provisioning manifest. Argo CD applies this as a Sync hook;
-# the workflow runs the shared `provision-service` ClusterWorkflowTemplate
-# (defined in k3s-infra ansible/roles/argo_workflows/templates/) which:
+# Per-service provisioning manifest. Argo CD applies this as a regular
+# tracked resource — NOT a Sync hook — because hooks don't trigger an
+# auto-sync when they're the only diff (Argo CD considers hooks "extra"
+# and the app reports Synced even when the hook hasn't run yet). Tracked
+# resources are part of the diff, so first apply creates + runs the
+# Workflow; once the chart's TTL (1 day) deletes it, Argo CD's selfHeal
+# detects the drift and re-creates it, which gives us roughly-daily
+# idempotent re-provisioning runs.
+#
+# Runs the shared `provision-service` ClusterWorkflowTemplate (defined in
+# k3s-infra ansible/roles/argo_workflows/templates/):
 #   - creates the Postgres role + database (idempotent)
 #   - writes DB_* keys to secret/<vault-path> in Vault
 #   - writes the Vault read policy + kubernetes auth role bound to this
@@ -8,18 +16,11 @@
 #
 # Replaces the entries this service used to need in
 # k3s-infra/ansible/roles/{postgresql,vault}/defaults/main.yml.
-#
-# `BeforeHookCreation` deletes the previous Workflow run before each new
-# sync re-creates it, so the manifest stays the source of truth and we
-# always have one inspectable run object.
 apiVersion: argoproj.io/v1alpha1
 kind: Workflow
 metadata:
   name: provision-snelnieuws-api
   namespace: argo-workflows
-  annotations:
-    argocd.argoproj.io/hook: Sync
-    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
 spec:
   workflowTemplateRef:
     name: provision-service
