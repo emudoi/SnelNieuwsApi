@@ -2,7 +2,7 @@ apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: snelnieuws-api
-  namespace: snelnieuws
+  namespace: emudoi-snelnieuws-api
   annotations:
     cert-manager.io/cluster-issuer: letsencrypt-production
 spec:
