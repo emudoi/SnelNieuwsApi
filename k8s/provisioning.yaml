@@ -1,0 +1,42 @@
+# Per-service provisioning manifest. Argo CD applies this as a regular
+# tracked resource — NOT a Sync hook — because hooks don't trigger an
+# auto-sync when they're the only diff (Argo CD considers hooks "extra"
+# and the app reports Synced even when the hook hasn't run yet). Tracked
+# resources are part of the diff, so first apply creates + runs the
+# Workflow; once the chart's TTL (1 day) deletes it, Argo CD's selfHeal
+# detects the drift and re-creates it, which gives us roughly-daily
+# idempotent re-provisioning runs.
+#
+# Runs the shared `provision-service` ClusterWorkflowTemplate (defined in
+# k3s-infra ansible/roles/argo_workflows/templates/):
+#   - creates the Postgres role + database (idempotent)
+#   - writes DB_* keys to secret/<vault-path> in Vault
+#   - writes the Vault read policy + kubernetes auth role bound to this
+#     deployment's ServiceAccount
+apiVersion: argoproj.io/v1alpha1
+kind: Workflow
+metadata:
+  name: provision-snelnieuws-api
+  namespace: argo-workflows
+spec:
+  workflowTemplateRef:
+    name: provision-service
+    clusterScope: true
+  arguments:
+    parameters:
+      # Single shared `emudoi` postgres role; legacy `snelnieuws` DB (459
+      # articles migrated from emudoi-postgres). The previous per-service
+      # `snelnieuws_api` DB + role created by an earlier workflow run held
+      # only flyway sample data — orphaned.
+      - name: db
+        value: snelnieuws
+      - name: db-user
+        value: emudoi
+      - name: vault-path
+        value: snelnieuws/api
+      - name: vault-role
+        value: emudoi-snelnieuws-api
+      - name: namespace
+        value: emudoi-snelnieuws-api
+      - name: service-account
+        value: emudoi-snelnieuws-api
