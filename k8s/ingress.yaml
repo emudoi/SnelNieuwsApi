@@ -5,27 +5,15 @@ metadata:
   namespace: emudoi-snelnieuws-api
   # No cert-manager annotation — the cluster-wide wildcard cert
   # (issued by k3s-infra's wildcard_cert role via DNS-01, mirrored
-  # into every namespace by Reflector) covers both *.snel.v1.emudoi.com
-  # and *.snel.emudoi.com. Dual-listen during the v1 → bare cutover;
-  # api.snel.emudoi.com is the canonical mobile-API endpoint after Phase 5.
+  # into every namespace by Reflector) covers *.snel.emudoi.com.
+  # Canonical mobile-API endpoint.
 spec:
   ingressClassName: traefik
   tls:
     - hosts:
-        - api.snel.v1.emudoi.com
         - api.snel.emudoi.com
       secretName: wildcard-tls
   rules:
-    - host: api.snel.v1.emudoi.com
-      http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: snelnieuws-api
-                port:
-                  name: http
     - host: api.snel.emudoi.com
       http:
         paths:
