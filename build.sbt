@@ -30,8 +30,9 @@ lazy val root = (project in file("."))
       "io.circe"                %% "circe-core"            % CirceVersion,
       "io.circe"                %% "circe-generic"         % CirceVersion,
       "io.circe"                %% "circe-parser"          % CirceVersion,
-      // Firebase Admin SDK — used to push notifications via FCM
-      "com.google.firebase"      % "firebase-admin"        % "9.3.0",
+      // Pushy — JVM APNs (HTTP/2) client. Used to push notifications directly
+      // to Apple, no Firebase indirection.
+      "com.eatthepath"           % "pushy"                 % "0.15.4",
       // Test
       "org.scalatra"            %% "scalatra-scalatest"    % ScalatraVersion % Test
     ),

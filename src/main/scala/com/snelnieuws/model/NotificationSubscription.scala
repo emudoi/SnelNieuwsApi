@@ -2,7 +2,7 @@ package com.snelnieuws.model
 
 case class NotificationSubscription(
   deviceId: String,
-  fcmToken: String,
+  apnsToken: String,
   frequency: Int,
   createdAt: String,
   updatedAt: String
@@ -10,7 +10,7 @@ case class NotificationSubscription(
 
 case class SubscribeRequest(
   deviceId: String,
-  fcmToken: String,
+  apnsToken: String,
   frequency: Int
 )
 

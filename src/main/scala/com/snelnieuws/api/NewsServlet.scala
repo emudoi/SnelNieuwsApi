@@ -3,7 +3,7 @@ package com.snelnieuws.api
 import org.scalatra._
 import org.scalatra.json._
 import org.json4s.{DefaultFormats, Formats}
-import com.snelnieuws.service.{ArticleService, FirebaseMessagingService}
+import com.snelnieuws.service.{ApnsMessagingService, ArticleService}
 import com.snelnieuws.db.{ArticleRepository, NotificationDispatchRepository, NotificationSubscriptionRepository}
 import com.snelnieuws.model.{
   ArticleCreate,
@@ -102,12 +102,12 @@ class NewsServlet(notificationsEnabled: Boolean, notificationsApiKey: String)
   // keyed on deviceId. No auth: this is keyed by the device's stable UUID.
   post("/notifications/subscribe") {
     val req = parsedBody.extract[SubscribeRequest]
-    if (req.deviceId.trim.isEmpty || req.fcmToken.trim.isEmpty) {
-      BadRequest(Map("error" -> "deviceId and fcmToken are required"))
+    if (req.deviceId.trim.isEmpty || req.apnsToken.trim.isEmpty) {
+      BadRequest(Map("error" -> "deviceId and apnsToken are required"))
     } else if (req.frequency < 1 || req.frequency > 4) {
       BadRequest(Map("error" -> "frequency must be between 1 and 4"))
     } else {
-      NotificationSubscriptionRepository.upsert(req.deviceId, req.fcmToken, req.frequency)
+      NotificationSubscriptionRepository.upsert(req.deviceId, req.apnsToken, req.frequency)
       Map("ok" -> true)
     }
   }
@@ -147,7 +147,7 @@ class NewsServlet(notificationsEnabled: Boolean, notificationsApiKey: String)
                 case Some(f) => NotificationSubscriptionRepository.findTokensByFrequency(f)
                 case None    => NotificationSubscriptionRepository.findAllTokens()
               }
-              FirebaseMessagingService.sendBatch(tokens, title, body, Map.empty)
+              ApnsMessagingService.sendBatch(tokens, title, body)
             }
 
           NotificationDispatchRepository.recordDispatch(

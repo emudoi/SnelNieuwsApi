@@ -32,14 +32,17 @@ spec:
           export {{ $k }}={{ $v | toJSON }}
           {{- end }}
           {{- end }}
-        # Firebase service-account JSON, rendered verbatim to
-        # /vault/secrets/firebase-credentials.json (path expected by
-        # application.conf -> notifications.firebase-credentials-path).
-        # Stored at secret/snelnieuws/api/firebase under key `credentials_json`.
-        vault.hashicorp.com/agent-inject-secret-firebase-credentials.json: "secret/data/snelnieuws/api/firebase"
-        vault.hashicorp.com/agent-inject-template-firebase-credentials.json: |
-          {{- with secret "secret/data/snelnieuws/api/firebase" -}}
-          {{ .Data.data.credentials_json }}
+        # APNs auth key (.p8), rendered verbatim to
+        # /vault/secrets/apns-auth-key.p8 (path expected by
+        # application.conf -> notifications.apns.key-path).
+        # Stored at secret/snelnieuws/api/apns under key `key_p8`.
+        # Adjacent keys at the same Vault path (key_id, team_id, bundle_id)
+        # are surfaced as APNS_* env vars via secret/snelnieuws/api/app.env
+        # — see vault-publish role in emudoi-service-infra.
+        vault.hashicorp.com/agent-inject-secret-apns-auth-key.p8: "secret/data/snelnieuws/api/apns"
+        vault.hashicorp.com/agent-inject-template-apns-auth-key.p8: |
+          {{- with secret "secret/data/snelnieuws/api/apns" -}}
+          {{ .Data.data.key_p8 }}
           {{- end }}
     spec:
       serviceAccountName: emudoi-snelnieuws-api

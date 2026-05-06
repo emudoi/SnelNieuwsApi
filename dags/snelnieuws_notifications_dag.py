@@ -3,7 +3,7 @@
 One DAG per tier. Each DAG fires `POST /notifications/dispatch?frequency=N`
 on its own schedule. The API itself decides what message to send (counts new
 articles since the last dispatch for that tier and pushes a generic
-"X new articles" message via FCM).
+"X new articles" message directly via APNs).
 
 Idempotency: the dispatch endpoint records every call in
 `notification_dispatches` and bumps the per-tier `as_of_article_id`. A

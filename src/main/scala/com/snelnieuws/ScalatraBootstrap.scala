@@ -3,7 +3,7 @@ package com.snelnieuws
 import com.snelnieuws.api.NewsServlet
 import com.snelnieuws.db.Database
 import com.snelnieuws.kafka.SummarizedImportKafkaConfig
-import com.snelnieuws.service.{ArticleCleanupScheduler, FirebaseMessagingService, SummarizedArticleConsumer}
+import com.snelnieuws.service.{ApnsMessagingService, ArticleCleanupScheduler, SummarizedArticleConsumer}
 import com.typesafe.config.ConfigFactory
 import org.scalatra.LifeCycle
 import javax.servlet.ServletContext
@@ -35,18 +35,26 @@ class ScalatraBootstrap extends LifeCycle {
     val notifApiKey  = notifCfg.getString("api-key")
 
     if (notifEnabled) {
-      val credsPath = notifCfg.getString("firebase-credentials-path")
-      if (Files.exists(Paths.get(credsPath))) {
+      val apnsCfg  = notifCfg.getConfig("apns")
+      val keyPath  = apnsCfg.getString("key-path")
+      val keyId    = apnsCfg.getString("key-id")
+      val teamId   = apnsCfg.getString("team-id")
+      val bundleId = apnsCfg.getString("bundle-id")
+      val sandbox  = apnsCfg.getBoolean("sandbox")
+
+      if (keyId.isEmpty || teamId.isEmpty) {
+        logger.warn("Notifications enabled but APNs key-id or team-id missing — dispatch will be a no-op")
+      } else if (!Files.exists(Paths.get(keyPath))) {
+        logger.warn(s"Notifications enabled but APNs key file not found at $keyPath — dispatch will be a no-op")
+      } else {
         try {
-          FirebaseMessagingService.init(credsPath)
+          ApnsMessagingService.init(keyPath, keyId, teamId, bundleId, sandbox)
         } catch {
           case e: Exception =>
             // Don't crash the API — subscribe still works; dispatch will report
             // failures until init succeeds (e.g. on the next deploy/restart).
-            logger.error(s"Failed to initialize Firebase Admin SDK from $credsPath: ${e.getMessage}", e)
+            logger.error(s"Failed to initialize APNs client: ${e.getMessage}", e)
         }
-      } else {
-        logger.warn(s"Notifications enabled but Firebase credentials not found at $credsPath — dispatch will be a no-op")
       }
     } else {
       logger.info("Notifications are disabled (notifications.enabled=false)")
