@@ -1,0 +1,11 @@
+# Build dispatch declaration. Read by the cluster's `discover-and-build`
+# Argo Workflow on every push to main; it parses this file to dispatch
+# the named ClusterWorkflowTemplate. Absent file = no auto-build.
+#
+# kind  : ClusterWorkflowTemplate name (scala-build | dockerfile-build).
+# image : GHCR image path WITHOUT registry or tag (e.g. emudoi/foo).
+#         The build template prepends `ghcr.io/` and pushes both
+#         `:<sha>` and `:main` tags. Defaults to the repo's full_name
+#         when omitted, but we set it explicitly here for traceability.
+kind: scala-build
+image: emudoi/emudoi-snelnieuws-api

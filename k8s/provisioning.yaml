@@ -13,6 +13,9 @@
 #   - writes DB_* keys to secret/<vault-path> in Vault
 #   - writes the Vault read policy + kubernetes auth role bound to this
 #     deployment's ServiceAccount
+#
+# Replaces the entries this service used to need in
+# k3s-infra/ansible/roles/{postgresql,vault}/defaults/main.yml.
 apiVersion: argoproj.io/v1alpha1
 kind: Workflow
 metadata:
@@ -24,10 +27,10 @@ spec:
     clusterScope: true
   arguments:
     parameters:
-      # Single shared `emudoi` postgres role; legacy `snelnieuws` DB (459
-      # articles migrated from emudoi-postgres). The previous per-service
-      # `snelnieuws_api` DB + role created by an earlier workflow run held
-      # only flyway sample data — orphaned.
+      # Single shared `emudoi` postgres role + the legacy `snelnieuws` DB
+      # (459 articles migrated from emudoi-postgres). The per-service
+      # `snelnieuws_api` role + DB created by earlier workflow runs held
+      # only flyway sample data + post-rebuild stragglers — orphaned.
       - name: db
         value: snelnieuws
       - name: db-user
