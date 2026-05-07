@@ -33,6 +33,12 @@ class NotificationService(
   ): Either[Throwable, Int] =
     subscriptionRepository.upsert(req.deviceId, req.apnsToken, req.frequency, userId)
 
+  /** Delete a single device's subscription regardless of whether it was
+    * linked to a user. Used by account-deletion to clean up rows whose
+    * user_id is NULL (the FK CASCADE doesn't cover those). */
+  def deleteDevice(deviceId: String): Either[Throwable, Int] =
+    subscriptionRepository.deleteByDeviceId(deviceId)
+
   def dispatch(frequency: Option[Int]): Either[Throwable, DispatchOutcome] = {
     apns match {
       case None =>

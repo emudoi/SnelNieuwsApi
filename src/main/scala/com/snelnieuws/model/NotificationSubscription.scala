@@ -22,7 +22,7 @@ case class DispatchResponse(
 
 case class User(
   id: String,
-  email: String,
+  email: Option[String],
   createdAt: String,
   updatedAt: String
 )

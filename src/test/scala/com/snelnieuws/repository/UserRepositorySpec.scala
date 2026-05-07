@@ -22,7 +22,7 @@ class UserRepositorySpec
       userRepo.findById(uid).toOption.flatten match {
         case Some(u) =>
           u.id    shouldBe uid
-          u.email shouldBe "alice@example.com"
+          u.email shouldBe Some("alice@example.com")
         case None => fail("user not inserted")
       }
     }
@@ -33,7 +33,50 @@ class UserRepositorySpec
       userRepo.upsert(uid, "old@example.com") shouldBe a[Right[_, _]]
       userRepo.upsert(uid, "new@example.com") shouldBe a[Right[_, _]]
 
-      userRepo.findById(uid).toOption.flatten.map(_.email) shouldBe Some("new@example.com")
+      userRepo.findById(uid).toOption.flatten.map(_.email) shouldBe Some(Some("new@example.com"))
+    }
+  }
+
+  "NotificationSubscriptionRepository.upsert with userId (self-heal)" should {
+    "create a missing users row instead of failing the FK" in {
+      requireDb()
+      // No POST /users was ever made for this uid — the self-heal in upsert
+      // is what guarantees subscribe doesn't FK-fail.
+      val uid = "user-repo-spec-selfheal-uid"
+      userRepo.findById(uid).toOption.flatten shouldBe None
+
+      subRepo.upsert(
+        "user-repo-spec-selfheal-device",
+        "selfheal-token",
+        2,
+        userId = Some(uid)
+      ) shouldBe a[Right[_, _]]
+
+      // Subscription row is linked to the user.
+      subRepo.lastFrequencyByUserId(uid) shouldBe Right(Some(2))
+      // Users row was auto-created with no email.
+      userRepo.findById(uid).toOption.flatten match {
+        case Some(u) =>
+          u.id    shouldBe uid
+          u.email shouldBe None
+        case None => fail("self-heal didn't create users row")
+      }
+    }
+
+    "leave an existing users row's email untouched on self-heal" in {
+      requireDb()
+      val uid = "user-repo-spec-selfheal-existing"
+      userRepo.upsert(uid, "existing@example.com") shouldBe a[Right[_, _]]
+
+      // Self-heal path runs ON CONFLICT DO NOTHING — must not blank the email.
+      subRepo.upsert(
+        "user-repo-spec-selfheal-existing-device",
+        "tok",
+        2,
+        userId = Some(uid)
+      ) shouldBe a[Right[_, _]]
+
+      userRepo.findById(uid).toOption.flatten.flatMap(_.email) shouldBe Some("existing@example.com")
     }
   }
 

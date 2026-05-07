@@ -447,6 +447,34 @@ class NewsServletSpec
       }
     }
 
+    "also delete the device row when ?deviceId=X is provided (covers user_id=NULL case)" in {
+      requireDb()
+      // Simulate the post-bug-fix scenario: device row exists with user_id=NULL
+      // (e.g. signup happened during a backend outage, /users never created).
+      // CASCADE wouldn't cover this row; ?deviceId= explicitly cleans it up.
+      val sub = """{
+        "deviceId":  "delete-me-orphan-device",
+        "apnsToken": "delete-me-orphan-token",
+        "frequency": 2
+      }"""
+      post("/notifications/subscribe", sub, jsonHeader) { status shouldBe 200 }
+
+      // Sanity: the row exists and is anonymous.
+      components.notificationSubscriptionRepository
+        .findUserIdByDeviceId("delete-me-orphan-device") shouldBe Right(Some(None))
+
+      // alice exists (auth required to call DELETE /users/me).
+      post("/users", """{"email":"alice@example.com"}""", authAlice) { status shouldBe 200 }
+
+      delete("/users/me?deviceId=delete-me-orphan-device", headers = authAlice) {
+        status shouldBe 204
+      }
+
+      // The orphan row is gone.
+      components.notificationSubscriptionRepository
+        .findUserIdByDeviceId("delete-me-orphan-device") shouldBe Right(None)
+    }
+
     "remove the user (cascade-deleting their subscription rows) and return 204" in {
       requireDb()
       // Set up: alice exists + has a subscription tied to her uid.

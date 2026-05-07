@@ -245,13 +245,33 @@ class NewsServlet(
 
   // DELETE /users/me — called by iOS during account deletion, BEFORE the
   // Firebase deletion (which invalidates the token). FK ON DELETE CASCADE
-  // wipes the user's notification_subscriptions rows.
+  // wipes the user's notification_subscriptions rows that have user_id set.
+  //
+  // Optional `?deviceId=X` query param: also delete that specific device row
+  // by deviceId. This covers the case where the device's row was created
+  // with user_id=NULL (e.g. signup happened during a backend outage and the
+  // POST /users call silently failed, so the user_id link was never made).
+  // Without this, the device keeps receiving pushes after account deletion.
   delete("/users/me") {
     val uid = requireUid()
-    userService.delete(uid) match {
-      case Right(_) => NoContent()
+    val deviceIdOpt = params.get("deviceId").map(_.trim).filter(_.nonEmpty)
+
+    val deviceCleanup: Either[Throwable, Int] = deviceIdOpt match {
+      case Some(deviceId) =>
+        notificationService.deleteDevice(deviceId)
+      case None =>
+        Right(0)
+    }
+
+    deviceCleanup match {
       case Left(e) =>
-        InternalServerError(Map("error" -> s"Failed to delete user: ${e.getMessage}"))
+        InternalServerError(Map("error" -> s"Failed to delete device subscription: ${e.getMessage}"))
+      case Right(_) =>
+        userService.delete(uid) match {
+          case Right(_) => NoContent()
+          case Left(e) =>
+            InternalServerError(Map("error" -> s"Failed to delete user: ${e.getMessage}"))
+        }
     }
   }
 

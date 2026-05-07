@@ -3,6 +3,7 @@ package com.snelnieuws.repository
 import cats.effect.IO
 import cats.effect.unsafe.implicits.global
 import doobie._
+import doobie.free.connection
 import doobie.hikari.HikariTransactor
 import doobie.implicits._
 import org.slf4j.LoggerFactory
@@ -13,29 +14,49 @@ class NotificationSubscriptionRepository(provideTransactor: => HikariTransactor[
 
   private lazy val transactor: HikariTransactor[IO] = provideTransactor
 
+  /** Upsert the device's subscription row. When `userId` is provided, this
+    * runs in one transaction with a self-healing `INSERT INTO users (id) ON
+    * CONFLICT DO NOTHING` so a missing users row (e.g. POST /users failed
+    * silently at signup time) never causes an FK violation here. The email
+    * column was relaxed to NULL in V9 specifically to allow this — the next
+    * /users upsert from iOS fills in the email. */
   def upsert(
     deviceId: String,
     apnsToken: String,
     frequency: Int,
     userId: Option[String] = None
-  ): Either[Throwable, Int] =
+  ): Either[Throwable, Int] = {
+    val ensureUser: ConnectionIO[Int] = userId match {
+      case Some(uid) =>
+        sql"INSERT INTO users (id) VALUES ($uid) ON CONFLICT (id) DO NOTHING"
+          .update.run
+      case None =>
+        connection.pure(0)
+    }
+
+    val upsertSubscription: ConnectionIO[Int] =
+      sql"""
+        INSERT INTO notification_subscriptions (device_id, apns_token, frequency, user_id)
+        VALUES ($deviceId, $apnsToken, $frequency, $userId)
+        ON CONFLICT (device_id) DO UPDATE SET
+          apns_token = EXCLUDED.apns_token,
+          frequency  = EXCLUDED.frequency,
+          user_id    = EXCLUDED.user_id,
+          updated_at = NOW()
+      """.update.run
+
     try
       Right(
-        sql"""
-          INSERT INTO notification_subscriptions (device_id, apns_token, frequency, user_id)
-          VALUES ($deviceId, $apnsToken, $frequency, $userId)
-          ON CONFLICT (device_id) DO UPDATE SET
-            apns_token = EXCLUDED.apns_token,
-            frequency  = EXCLUDED.frequency,
-            user_id    = EXCLUDED.user_id,
-            updated_at = NOW()
-        """.update.run.transact(transactor).unsafeRunSync()
+        ensureUser.flatMap(_ => upsertSubscription)
+          .transact(transactor)
+          .unsafeRunSync()
       )
     catch {
       case e: Exception =>
         logger.error(s"Failed to upsert subscription deviceId=$deviceId: ${e.getMessage}", e)
         Left(e)
     }
+  }
 
   def findTokensByFrequency(frequency: Int): Either[Throwable, List[String]] =
     try
