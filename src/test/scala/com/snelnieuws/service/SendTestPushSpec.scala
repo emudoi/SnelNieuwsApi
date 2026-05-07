@@ -38,7 +38,9 @@ import org.scalatest.wordspec.AnyWordSpec
 class SendTestPushSpec extends AnyWordSpec with Matchers {
 
   "PushyApnsMessagingService" should {
-    "deliver a push to a hardcoded APNs device token" in {
+    // Disabled — manual one-off integration test. To run it again later,
+    // change `ignore` back to `in` and execute via ./test-send-push.sh.
+    "deliver a push to a hardcoded APNs device token" ignore {
       val keyPath     = sys.env.getOrElse("APNS_KEY_PATH", "")
       val keyId       = sys.env.getOrElse("APNS_KEY_ID", "")
       val teamId      = sys.env.getOrElse("APNS_TEAM_ID", "")
