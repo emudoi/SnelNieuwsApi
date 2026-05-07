@@ -12,7 +12,7 @@
 #
 # Optional env overrides:
 #   NOTIFICATIONS_API_KEY  pre-supplied dispatch shared secret (default: openssl rand -hex 32)
-#   P8_PATH                path to AuthKey_*.p8 (default: ../emudoi-snelnieuws-ios/AuthKey_K9MVS7XY7S.p8)
+#   P8_PATH                path to AuthKey_*.p8 (default: ../emudoi-snelnieuws-ios/AuthKey_U5Z9BW99GS.p8)
 #   APNS_KEY_ID, APNS_TEAM_ID, APNS_BUNDLE_ID, APNS_SANDBOX
 #   VAULT_NS, VAULT_POD, VAULT_PATH
 
@@ -23,8 +23,8 @@ VAULT_NS="${VAULT_NS:-vault}"
 VAULT_POD="${VAULT_POD:-vault-0}"
 VAULT_PATH="${VAULT_PATH:-secret/snelnieuws/api}"
 
-P8_PATH="${P8_PATH:-/Users/pranjutgogoi/workspace/emudoi/emudoi-snelnieuws-ios/AuthKey_K9MVS7XY7S.p8}"
-APNS_KEY_ID="${APNS_KEY_ID:-K9MVS7XY7S}"
+P8_PATH="${P8_PATH:-/Users/pranjutgogoi/workspace/emudoi/emudoi-snelnieuws-ios/AuthKey_U5Z9BW99GS.p8}"
+APNS_KEY_ID="${APNS_KEY_ID:-U5Z9BW99GS}"
 APNS_TEAM_ID="${APNS_TEAM_ID:-7PB86SYNNM}"
 APNS_BUNDLE_ID="${APNS_BUNDLE_ID:-com.emudoi.snelnieuws}"
 APNS_SANDBOX="${APNS_SANDBOX:-false}"
