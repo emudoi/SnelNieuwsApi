@@ -61,6 +61,12 @@ spec:
       imagePullSecrets:
         - name: ghcr-creds
       priorityClassName: app-default
+      # The image runs as uid 1001 (`emudoi`). nfs-subdir-external-provisioner
+      # creates the per-PVC subdirectory world-writable, but pinning fsGroup
+      # to 1001 ensures the mount is group-owned by the app user too — so
+      # any future change in the provisioner's umask doesn't break writes.
+      securityContext:
+        fsGroup: 1001
       # Spread replicas across nodes if/when we scale beyond 1. Soft
       # constraint (ScheduleAnyway) so a single-replica deployment isn't
       # blocked when only one healthy node has capacity.
@@ -71,6 +77,13 @@ spec:
           labelSelector:
             matchLabels:
               app.kubernetes.io/name: snelnieuws-api
+      volumes:
+        # NFS-backed image cache — see pvc.yaml. Worker writes here from
+        # ImageDownloadWorker; ImageServlet reads from here on GET
+        # /v2/images/<path>. Survives pod restarts; reclaimPolicy=Retain.
+        - name: images
+          persistentVolumeClaim:
+            claimName: snelnieuws-api-images
       containers:
         - name: app
           # `:main` is a moving tag — argocd-image-updater notices new
@@ -101,6 +114,15 @@ spec:
             # longer resolves. Pure config, not a secret — kept in the manifest.
             - name: KAFKA_BOOTSTRAP_SERVERS
               value: "kafka.kafka.svc.cluster.local:9092"
+            # Origin used to build absolute urlToImage values in API
+            # responses. Same host iOS already calls (see ingress.yaml +
+            # NewsAPIService.swift:15) so AsyncImage(url: ...) works
+            # without any iOS-side URL-resolution code.
+            - name: IMAGES_PUBLIC_BASE_URL
+              value: "https://api.snel.emudoi.com"
+          volumeMounts:
+            - name: images
+              mountPath: /data/images
           ports:
             - name: http
               containerPort: 8080

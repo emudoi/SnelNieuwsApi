@@ -34,6 +34,11 @@ class ScalatraBootstrap extends LifeCycle {
     context.mount(components.notificationDispatchServlet, "/notifications/dispatch")
     context.mount(components.staticContentServlet, "/privacy")
     context.mount(components.staticContentServlet, "/support")
+    // /v2/images/* is mounted as its own open servlet (no X-Client /
+    // X-Client-Key gate) so iOS's plain AsyncImage(url: ...) works
+    // header-free. The Servlet API picks the longest matching prefix,
+    // so this wins over /v2/* below regardless of declaration order.
+    context.mount(components.imageServlet, "/v2/images/*")
     context.mount(components.newsServletV2, "/v2/*")
     // v1 catch-all stays mounted last, conceptually — kept here for
     // readability of the routing table.

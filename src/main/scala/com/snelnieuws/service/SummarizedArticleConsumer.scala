@@ -17,7 +17,9 @@ import scala.jdk.CollectionConverters._
 
 class SummarizedArticleConsumer(
   articleRepository: ArticleRepository,
-  kafkaConfig: SummarizedImportKafkaConfig
+  kafkaConfig: SummarizedImportKafkaConfig,
+  imageCacheService: ImageCacheService,
+  imageDownloadWorker: ImageDownloadWorker
 ) {
 
   import SummarizedArticleConsumer._
@@ -98,9 +100,26 @@ class SummarizedArticleConsumer(
     }
     decode[SummarizedArticleExportEvent](payload) match {
       case Right(event) =>
-        articleRepository.upsertByTitle(event.article) match {
+        // Rewrite urlToImage to the content-addressed local path before
+        // we persist. The bytes aren't on NFS yet — that's the worker's
+        // job below — but iOS can still render the article: the servlet
+        // serves the bundled fallback for paths without bytes, then the
+        // same URL starts returning the real image once the worker
+        // finishes (URLCache TTL on the miss is 60s).
+        val sourceUrlOpt = event.article.urlToImage.map(_.trim).filter(_.nonEmpty)
+        val rewrittenUrl: Option[String] = sourceUrlOpt match {
+          case Some(src) => Some(imageCacheService.relativeUrlFor(src))
+          case None      => Some(imageCacheService.fallbackRelativeUrl)
+        }
+        val rewrittenArticle = event.article.copy(urlToImage = rewrittenUrl)
+
+        articleRepository.upsertByTitle(rewrittenArticle) match {
           case Right(_) =>
             logger.info(s"Upserted summarized article title=${event.article.title}")
+            // Enqueue *after* the row write so a failed enqueue can never
+            // race ahead of an unwritten article. Idempotent at the
+            // service layer — duplicates from re-delivery are no-ops.
+            sourceUrlOpt.foreach(imageDownloadWorker.enqueue)
           case Left(e) =>
             // Don't poison the partition — log and skip. Re-throwing here would block this
             // partition forever since we'd never advance the offset.

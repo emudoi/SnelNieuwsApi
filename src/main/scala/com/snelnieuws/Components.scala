@@ -3,6 +3,7 @@ package com.snelnieuws
 import cats.effect.IO
 import com.snelnieuws.api.{
   HealthServlet,
+  ImageServlet,
   NewsServlet,
   NewsServletV2,
   NotificationDispatchServlet,
@@ -14,6 +15,7 @@ import com.snelnieuws.kafka.SummarizedImportKafkaConfig
 import com.snelnieuws.repository.{
   AppClientRepository,
   ArticleRepository,
+  ImageCacheRepository,
   NotificationDispatchRepository,
   NotificationSubscriptionRepository,
   UserRepository
@@ -23,6 +25,10 @@ import com.snelnieuws.service.{
   ApnsMessagingService,
   ArticleCleanupScheduler,
   ArticleService,
+  ImageCacheCleanupScheduler,
+  ImageCacheConfig,
+  ImageCacheService,
+  ImageDownloadWorker,
   NotificationService,
   PushyApnsMessagingService,
   SummarizedArticleConsumer,
@@ -54,6 +60,20 @@ class Components(
     new UserRepository(provideTransactor)
   lazy val appClientRepository: AppClientRepository =
     new AppClientRepository(provideTransactor)
+  lazy val imageCacheRepository: ImageCacheRepository =
+    new ImageCacheRepository(provideTransactor)
+
+  // Image cache config — single source of truth read once on construct.
+  private val imagesCfg = rootConfig.getConfig("images")
+  val imagesPublicBaseUrl: String = imagesCfg.getString("public-base-url")
+  private val imageCacheServiceConfig: ImageCacheConfig = ImageCacheConfig(
+    rootDir             = imagesCfg.getString("root-dir"),
+    downloadTimeoutMs   = imagesCfg.getLong("download-timeout-ms"),
+    maxBytes            = imagesCfg.getLong("max-bytes"),
+    userAgent           = imagesCfg.getString("user-agent"),
+    maxAttempts         = imagesCfg.getInt("max-attempts"),
+    retryBackoffMinutes = imagesCfg.getLong("retry-backoff-minutes")
+  )
 
   // Notification config (api-key needed by servlet for transport-level auth)
   private val notificationsConfig         = rootConfig.getConfig("notifications")
@@ -93,8 +113,44 @@ class Components(
   }
 
   // Services
+  lazy val imageCacheService: ImageCacheService =
+    new ImageCacheService(
+      repository = imageCacheRepository,
+      httpClient = ImageCacheService.defaultHttpClient(imageCacheServiceConfig),
+      config     = imageCacheServiceConfig
+    )
+
+  lazy val imageDownloadWorker: ImageDownloadWorker =
+    new ImageDownloadWorker(
+      imageCacheService = imageCacheService,
+      workerThreads     = imagesCfg.getInt("worker-threads"),
+      queueCapacity     = imagesCfg.getInt("queue-capacity")
+    )
+
+  lazy val imageCacheCleanupScheduler: Option[ImageCacheCleanupScheduler] = {
+    val cleanupCfg = imagesCfg.getConfig("cleanup")
+    if (cleanupCfg.getBoolean("enabled")) {
+      Some(
+        new ImageCacheCleanupScheduler(
+          imageCacheRepository = imageCacheRepository,
+          rootDir              = imagesCfg.getString("root-dir"),
+          retentionHours       = cleanupCfg.getLong("retention-hours"),
+          intervalMinutes      = cleanupCfg.getLong("interval-minutes")
+        )
+      )
+    } else {
+      logger.info("Image cache cleanup scheduler is disabled (images.cleanup.enabled=false)")
+      None
+    }
+  }
+
   lazy val articleService: ArticleService =
-    new ArticleService(articleRepository)
+    new ArticleService(
+      repository          = articleRepository,
+      imageCacheService   = imageCacheService,
+      imageDownloadWorker = imageDownloadWorker,
+      publicBaseUrl       = imagesPublicBaseUrl
+    )
 
   lazy val notificationService: NotificationService =
     new NotificationService(
@@ -126,7 +182,14 @@ class Components(
   lazy val summarizedArticleConsumer: Option[SummarizedArticleConsumer] = {
     val kafkaCfg = SummarizedImportKafkaConfig.load(rootConfig)
     if (kafkaCfg.enabled) {
-      try Some(new SummarizedArticleConsumer(articleRepository, kafkaCfg))
+      try Some(
+        new SummarizedArticleConsumer(
+          articleRepository   = articleRepository,
+          kafkaConfig         = kafkaCfg,
+          imageCacheService   = imageCacheService,
+          imageDownloadWorker = imageDownloadWorker
+        )
+      )
       catch {
         case e: Exception =>
           // Don't crash the API if Kafka is down — just log it.
@@ -161,16 +224,26 @@ class Components(
     new StaticContentServlet
   lazy val healthServlet: HealthServlet =
     new HealthServlet
+  lazy val imageServlet: ImageServlet =
+    new ImageServlet(imageCacheService)
 
   /** Eagerly resolve background workers and start them. Idempotent. */
   def startBackgroundWorkers(): Unit = {
     articleCleanupScheduler.foreach(_.start())
+    imageDownloadWorker.start()
+    imageCacheCleanupScheduler.foreach(_.start())
     summarizedArticleConsumer.foreach(_.start())
   }
 
   def close(): Unit = {
     logger.info("Shutting down components...")
+    // Order matters: stop the producer of work first, then drain the
+    // worker before letting the JVM exit so in-flight downloads either
+    // finish or are abandoned cleanly. Cleanup schedulers are
+    // independent and can stop in any order.
     summarizedArticleConsumer.foreach(_.stop())
+    imageDownloadWorker.stop()
+    imageCacheCleanupScheduler.foreach(_.stop())
     articleCleanupScheduler.foreach(_.stop())
   }
 }
