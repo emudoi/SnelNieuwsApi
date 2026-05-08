@@ -6,7 +6,10 @@ import doobie._
 import doobie.free.connection
 import doobie.hikari.HikariTransactor
 import doobie.implicits._
+import doobie.postgres.implicits._
 import org.slf4j.LoggerFactory
+
+import java.util.UUID
 
 class NotificationSubscriptionRepository(provideTransactor: => HikariTransactor[IO]) {
 
@@ -24,7 +27,8 @@ class NotificationSubscriptionRepository(provideTransactor: => HikariTransactor[
     deviceId: String,
     apnsToken: String,
     frequency: Int,
-    userId: Option[String] = None
+    userId: Option[String] = None,
+    clientId: Option[UUID] = None
   ): Either[Throwable, Int] = {
     val ensureUser: ConnectionIO[Int] = userId match {
       case Some(uid) =>
@@ -34,14 +38,19 @@ class NotificationSubscriptionRepository(provideTransactor: => HikariTransactor[
         connection.pure(0)
     }
 
+    // EXCLUDED.client_id intentionally NOT used on conflict: the column
+    // is set when a v2-aware client first creates the row, and we don't
+    // want a later v1 subscribe (clientId=None) to NULL it back out.
+    // COALESCE keeps any existing client_id if the new one is NULL.
     val upsertSubscription: ConnectionIO[Int] =
       sql"""
-        INSERT INTO notification_subscriptions (device_id, apns_token, frequency, user_id)
-        VALUES ($deviceId, $apnsToken, $frequency, $userId)
+        INSERT INTO notification_subscriptions (device_id, apns_token, frequency, user_id, client_id)
+        VALUES ($deviceId, $apnsToken, $frequency, $userId, $clientId)
         ON CONFLICT (device_id) DO UPDATE SET
           apns_token = EXCLUDED.apns_token,
           frequency  = EXCLUDED.frequency,
           user_id    = EXCLUDED.user_id,
+          client_id  = COALESCE(EXCLUDED.client_id, notification_subscriptions.client_id),
           updated_at = NOW()
       """.update.run
 

@@ -8,6 +8,8 @@ import com.snelnieuws.repository.{
 }
 import org.slf4j.LoggerFactory
 
+import java.util.UUID
+
 sealed trait DispatchOutcome
 object DispatchOutcome {
   case object Disabled                          extends DispatchOutcome
@@ -29,9 +31,10 @@ class NotificationService(
 
   def subscribe(
     req: SubscribeRequest,
-    userId: Option[String] = None
+    userId: Option[String] = None,
+    clientId: Option[UUID] = None
   ): Either[Throwable, Int] =
-    subscriptionRepository.upsert(req.deviceId, req.apnsToken, req.frequency, userId)
+    subscriptionRepository.upsert(req.deviceId, req.apnsToken, req.frequency, userId, clientId)
 
   /** Delete a single device's subscription regardless of whether it was
     * linked to a user. Used by account-deletion to clean up rows whose

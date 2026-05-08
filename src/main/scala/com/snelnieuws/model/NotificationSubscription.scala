@@ -30,3 +30,9 @@ case class User(
 case class UpsertUserRequest(email: String)
 
 case class LastPreferenceResponse(frequency: Int)
+
+case class RegisterClientRequest(
+  clientId: String,
+  bundleId: String,
+  osVersion: Option[String]
+)

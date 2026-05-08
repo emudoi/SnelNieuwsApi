@@ -27,6 +27,16 @@ class ScalatraBootstrap extends LifeCycle {
     componentsRef.set(Some(components))
 
     context.mount(components.healthServlet, "/health/*")
+    // Exact-path mounts win over the v1 catch-all `/*` regardless of
+    // declaration order (Servlet API spec). Each of the routes below was
+    // previously a Scalatra route inside NewsServlet; extracting them into
+    // their own servlets is a no-op for callers — same URLs, same auth.
+    context.mount(components.notificationDispatchServlet, "/notifications/dispatch")
+    context.mount(components.staticContentServlet, "/privacy")
+    context.mount(components.staticContentServlet, "/support")
+    context.mount(components.newsServletV2, "/v2/*")
+    // v1 catch-all stays mounted last, conceptually — kept here for
+    // readability of the routing table.
     context.mount(components.newsServlet, "/*")
 
     components.startBackgroundWorkers()

@@ -1,11 +1,18 @@
 package com.snelnieuws
 
 import cats.effect.IO
-import com.snelnieuws.api.{HealthServlet, NewsServlet}
+import com.snelnieuws.api.{
+  HealthServlet,
+  NewsServlet,
+  NewsServletV2,
+  NotificationDispatchServlet,
+  StaticContentServlet
+}
 import com.snelnieuws.auth.FirebaseTokenVerifier
 import com.snelnieuws.db.Database
 import com.snelnieuws.kafka.SummarizedImportKafkaConfig
 import com.snelnieuws.repository.{
+  AppClientRepository,
   ArticleRepository,
   NotificationDispatchRepository,
   NotificationSubscriptionRepository,
@@ -45,6 +52,8 @@ class Components(
     new NotificationDispatchRepository(provideTransactor)
   lazy val userRepository: UserRepository =
     new UserRepository(provideTransactor)
+  lazy val appClientRepository: AppClientRepository =
+    new AppClientRepository(provideTransactor)
 
   // Notification config (api-key needed by servlet for transport-level auth)
   private val notificationsConfig         = rootConfig.getConfig("notifications")
@@ -136,9 +145,20 @@ class Components(
       articleService,
       notificationService,
       userService,
-      firebaseVerifier,
-      notificationsApiKey
+      firebaseVerifier
     )
+  lazy val newsServletV2: NewsServletV2 =
+    new NewsServletV2(
+      articleService,
+      notificationService,
+      userService,
+      appClientRepository,
+      firebaseVerifier
+    )
+  lazy val notificationDispatchServlet: NotificationDispatchServlet =
+    new NotificationDispatchServlet(notificationService, notificationsApiKey)
+  lazy val staticContentServlet: StaticContentServlet =
+    new StaticContentServlet
   lazy val healthServlet: HealthServlet =
     new HealthServlet
 

@@ -48,6 +48,13 @@ class NewsServletSpec
     verifierOverride = Some(stubVerifier)
   )
 
+  // Mirror production: dispatch + static now live in their own servlets.
+  // Mount them at the same exact paths the bootstrap uses so the existing
+  // test cases (which hit /notifications/dispatch, /privacy, /support)
+  // continue to exercise real production routing.
+  addServlet(components.notificationDispatchServlet, "/notifications/dispatch")
+  addServlet(components.staticContentServlet, "/privacy")
+  addServlet(components.staticContentServlet, "/support")
   addServlet(components.newsServlet, "/*")
 
   private val jsonHeader = Map("Content-Type" -> "application/json")

@@ -5,29 +5,86 @@ import com.snelnieuws.model.{
   ArticleCreate,
   LastPreferenceResponse,
   NewsFetchResponse,
+  RegisterClientRequest,
   SubscribeRequest,
   UpsertUserRequest
 }
+import com.snelnieuws.repository.AppClientRepository
 import com.snelnieuws.service.{ArticleService, NotificationService, UserService}
 import org.json4s.{DefaultFormats, Formats, MappingException}
 import org.scalatra._
 import org.scalatra.json.JacksonJsonSupport
 import org.slf4j.LoggerFactory
 
-class NewsServlet(
+import java.util.UUID
+import scala.util.Try
+
+/** v2 surface. Same routes as v1 (minus the static-HTML pages), plus
+  * client registration and an unauth delete-by-deviceId. Every request
+  * passes a two-layer gate:
+  *
+  *   1. X-Client: ios/<version>  — platform attestation. Trivial to spoof
+  *      but filters out drive-by scanners.
+  *   2. X-Client-Key: <uuid>     — install attestation. UUID is issued by
+  *      the app and looked up in app_clients on every call. Exempt only
+  *      for POST /clients/register (the bootstrap).
+  *
+  * v1 stays untouched and unguarded so existing App Store builds keep
+  * working. New iOS builds flip baseURL to /v2/ and gain the gates.
+  */
+class NewsServletV2(
   articleService: ArticleService,
   notificationService: NotificationService,
   userService: UserService,
+  appClientRepository: AppClientRepository,
   firebaseVerifier: FirebaseTokenVerifier
 ) extends ScalatraServlet
     with JacksonJsonSupport {
 
   protected implicit lazy val jsonFormats: Formats = DefaultFormats
 
-  private val logger = LoggerFactory.getLogger(classOf[NewsServlet])
+  private val logger = LoggerFactory.getLogger(classOf[NewsServletV2])
+
+  // Only iOS for now. Format: `ios/<version>` — version is kept lax (any
+  // non-empty token) so we don't need to ship a backend update every time
+  // the bundle version bumps.
+  private val ClientHeaderRe = """^ios/[^\s]+$""".r
+
+  // Routes that bypass the X-Client-Key check. POST /clients/register is
+  // the bootstrap — the app calls it on first launch precisely to obtain
+  // a recognised key, so requiring one here would be circular.
+  private val KeyExemptPaths: Set[String] = Set("/clients/register")
 
   before() {
     contentType = formats("json")
+
+    // Layer 1: platform attestation. Reject anything missing or wrong
+    // shape with 403. Same check on every route — including /clients/register.
+    val xClient = Option(request.getHeader("X-Client")).map(_.trim).getOrElse("")
+    if (!ClientHeaderRe.pattern.matcher(xClient).matches()) {
+      halt(Forbidden(Map("error" -> "missing or invalid X-Client header")))
+    }
+
+    // Layer 2: install attestation. Skipped for register.
+    if (!KeyExemptPaths.contains(requestPath)) {
+      val keyStr = Option(request.getHeader("X-Client-Key")).map(_.trim).getOrElse("")
+      val keyOpt = Try(UUID.fromString(keyStr)).toOption
+      keyOpt match {
+        case None =>
+          halt(Unauthorized(Map("error" -> "missing or malformed X-Client-Key")))
+        case Some(uuid) =>
+          appClientRepository.isActive(uuid) match {
+            case Right(true) =>
+              // Best-effort liveness bump. Don't fail the request if it errors.
+              appClientRepository.markSeen(uuid)
+            case Right(false) =>
+              halt(Unauthorized(Map("error" -> "unknown or revoked X-Client-Key")))
+            case Left(e) =>
+              logger.error(s"app_client lookup failed for $uuid: ${e.getMessage}", e)
+              halt(InternalServerError(Map("error" -> "client lookup failed")))
+          }
+      }
+    }
   }
 
   error {
@@ -36,7 +93,14 @@ class NewsServlet(
       InternalServerError(Map("error" -> "Internal server error"))
   }
 
-  // GET /everything — q, pageSize
+  private def clientIdFromHeader: Option[UUID] =
+    Option(request.getHeader("X-Client-Key"))
+      .map(_.trim)
+      .filter(_.nonEmpty)
+      .flatMap(s => Try(UUID.fromString(s)).toOption)
+
+  // ────────────────────────────── Articles ───────────────────────────────
+
   get("/everything") {
     val query = params.getOrElse("q", "")
     val limit = params.getOrElse("pageSize", "100").toInt
@@ -48,7 +112,6 @@ class NewsServlet(
     }
   }
 
-  // GET /top-headlines — category, pageSize
   get("/top-headlines") {
     val category = params.getOrElse("category", "")
     val limit    = params.getOrElse("pageSize", "100").toInt
@@ -60,7 +123,6 @@ class NewsServlet(
     }
   }
 
-  // POST /articles
   post("/articles") {
     try {
       val article = parsedBody.extract[ArticleCreate]
@@ -75,7 +137,6 @@ class NewsServlet(
     }
   }
 
-  // GET /articles/:id
   get("/articles/:id") {
     try {
       val id = params("id").toLong
@@ -91,7 +152,6 @@ class NewsServlet(
     }
   }
 
-  // DELETE /articles/:id
   delete("/articles/:id") {
     try {
       val id = params("id").toLong
@@ -107,7 +167,6 @@ class NewsServlet(
     }
   }
 
-  // GET /categories
   get("/categories") {
     articleService.findCategories() match {
       case Right(categories) => Map("categories" -> categories)
@@ -116,20 +175,47 @@ class NewsServlet(
     }
   }
 
-  // GET /app/config
   get("/app/config") {
     Map("minVersion" -> "1.2.0")
   }
 
-  // POST /notifications/subscribe — called by the iOS app on first launch,
-  // and on any later frequency change, token rotation, login, or logout.
-  // Idempotent upsert keyed on deviceId.
-  //
-  // Auth is OPTIONAL:
-  //   - Authorization header present and valid → user_id is set on the row.
-  //   - Authorization header absent           → user_id is set to NULL
-  //                                              (this is how logout unlinks).
-  //   - Authorization header present but invalid → 401.
+  // ─────────────────────────── Client registry ───────────────────────────
+
+  /** Bootstrap route. iOS calls on first launch with the UUID it generated
+    * locally and stored in Keychain; we record it so subsequent calls'
+    * X-Client-Key lookups succeed. Exempt from the X-Client-Key gate. */
+  post("/clients/register") {
+    try {
+      val req = parsedBody.extract[RegisterClientRequest]
+      val parsed = Try(UUID.fromString(req.clientId.trim)).toOption
+      parsed match {
+        case None =>
+          BadRequest(Map("error" -> "clientId must be a UUID"))
+        case _ if req.bundleId.trim.isEmpty =>
+          BadRequest(Map("error" -> "bundleId is required"))
+        case Some(uuid) =>
+          appClientRepository.upsertOnRegister(
+            clientId   = uuid,
+            bundleId   = req.bundleId.trim,
+            osVersion  = req.osVersion.map(_.trim).filter(_.nonEmpty),
+            platform   = "ios"
+          ) match {
+            case Right(_) => Map("ok" -> true)
+            case Left(e) =>
+              InternalServerError(Map("error" -> s"Failed to register client: ${e.getMessage}"))
+          }
+      }
+    } catch {
+      case e: MappingException =>
+        BadRequest(Map("error" -> s"Invalid request body: ${e.getMessage}"))
+    }
+  }
+
+  // ───────────────────────────── Notifications ───────────────────────────
+
+  /** Same semantics as v1 — Authorization optional (logout sends none).
+    * Difference: client_id is captured from the X-Client-Key header (which
+    * the gate has already verified) and persisted onto the row. */
   post("/notifications/subscribe") {
     try {
       val req = parsedBody.extract[SubscribeRequest]
@@ -149,7 +235,7 @@ class NewsServlet(
                   halt(Unauthorized(Map("error" -> "invalid or expired token")))
               }
           }
-        notificationService.subscribe(req, userIdOpt) match {
+        notificationService.subscribe(req, userIdOpt, clientIdFromHeader) match {
           case Right(_) => Map("ok" -> true)
           case Left(e) =>
             InternalServerError(Map("error" -> s"Failed to subscribe: ${e.getMessage}"))
@@ -161,13 +247,29 @@ class NewsServlet(
     }
   }
 
-  // /notifications/dispatch lives in NotificationDispatchServlet now.
-  // Same X-API-Key behavior — only the carrier servlet has changed.
+  /** New in v2: lets a Skip-mode user (no Firebase account) delete their
+    * device's subscription row. Auth is the X-Client + X-Client-Key gate
+    * — no Firebase token needed. */
+  delete("/notifications/:deviceId") {
+    val deviceId = params("deviceId").trim
+    if (deviceId.isEmpty) {
+      BadRequest(Map("error" -> "deviceId is required"))
+    } else {
+      notificationService.deleteDevice(deviceId) match {
+        case Right(rows) if rows > 0 => NoContent()
+        case Right(_)                => NotFound(Map("error" -> "no subscription for that deviceId"))
+        case Left(e) =>
+          InternalServerError(Map("error" -> s"Failed to delete subscription: ${e.getMessage}"))
+      }
+    }
+  }
 
-  // ---------- /users routes (auth required) ----------
+  // /notifications/dispatch is intentionally NOT mounted under v2 — it
+  // lives in NotificationDispatchServlet, gated only by X-API-Key, so
+  // Airflow doesn't need to learn about X-Client / X-Client-Key.
 
-  /** Verifies the Authorization header. Halts with 401 when missing or
-    * invalid. Returns the verified Firebase uid on success. */
+  // ───────────────────────────── Users (auth) ────────────────────────────
+
   private def requireUid(): String = {
     Option(request.getHeader("Authorization")).filter(_.nonEmpty) match {
       case None =>
@@ -182,9 +284,6 @@ class NewsServlet(
     }
   }
 
-  // POST /users — idempotent upsert of the backend user record. Auth required.
-  // iOS calls this on signup and (as a backfill) on every login. The uid
-  // comes from the verified token; only the email is in the body.
   post("/users") {
     val uid = requireUid()
     try {
@@ -204,9 +303,6 @@ class NewsServlet(
     }
   }
 
-  // GET /users/me/last-preference — returns the most-recently-updated
-  // frequency for any device owned by this user. iOS uses it on login on
-  // a fresh device to skip the onboarding picker. 404 → no prior pref.
   get("/users/me/last-preference") {
     val uid = requireUid()
     userService.lastFrequency(uid) match {
@@ -217,24 +313,13 @@ class NewsServlet(
     }
   }
 
-  // DELETE /users/me — called by iOS during account deletion, BEFORE the
-  // Firebase deletion (which invalidates the token). FK ON DELETE CASCADE
-  // wipes the user's notification_subscriptions rows that have user_id set.
-  //
-  // Optional `?deviceId=X` query param: also delete that specific device row
-  // by deviceId. This covers the case where the device's row was created
-  // with user_id=NULL (e.g. signup happened during a backend outage and the
-  // POST /users call silently failed, so the user_id link was never made).
-  // Without this, the device keeps receiving pushes after account deletion.
   delete("/users/me") {
     val uid = requireUid()
     val deviceIdOpt = params.get("deviceId").map(_.trim).filter(_.nonEmpty)
 
     val deviceCleanup: Either[Throwable, Int] = deviceIdOpt match {
-      case Some(deviceId) =>
-        notificationService.deleteDevice(deviceId)
-      case None =>
-        Right(0)
+      case Some(deviceId) => notificationService.deleteDevice(deviceId)
+      case None           => Right(0)
     }
 
     deviceCleanup match {
@@ -248,6 +333,4 @@ class NewsServlet(
         }
     }
   }
-
-  // /privacy and /support live in StaticContentServlet now.
 }
