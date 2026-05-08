@@ -96,6 +96,11 @@ spec:
           env:
             - name: KAFKA_SUMMARIZED_IMPORT_ENABLED
               value: "true"
+            # In-cluster DNS for the Kafka service (kafka/kafka.svc.cluster.local).
+            # The default in application.conf was the pre-k3s node IP and no
+            # longer resolves. Pure config, not a secret — kept in the manifest.
+            - name: KAFKA_BOOTSTRAP_SERVERS
+              value: "kafka.kafka.svc.cluster.local:9092"
           ports:
             - name: http
               containerPort: 8080
