@@ -36,3 +36,5 @@ case class RegisterClientRequest(
   bundleId: String,
   osVersion: Option[String]
 )
+
+case class CategoriesPayload(categories: List[String])

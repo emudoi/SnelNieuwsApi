@@ -4,6 +4,7 @@ import com.snelnieuws.auth.FirebaseTokenVerifier
 import com.snelnieuws.model.{
   ArticleCreate,
   Categories,
+  CategoriesPayload,
   LastPreferenceResponse,
   NewsFetchResponse,
   RegisterClientRequest,
@@ -310,6 +311,54 @@ class NewsServletV2(
       case Right(None)       => NotFound(Map("error" -> "no preferences set"))
       case Left(e) =>
         InternalServerError(Map("error" -> s"Failed to load preference: ${e.getMessage}"))
+    }
+  }
+
+  /** Returns the user's saved category filter list, or 404 if they
+    * haven't saved one. iOS uses this on login (alongside
+    * /last-preference) so a 2nd-device install inherits the picks. */
+  get("/users/me/categories") {
+    val uid = requireUid()
+    userService.findCategories(uid) match {
+      case Right(Some(list)) => CategoriesPayload(list)
+      case Right(None)       => NotFound(Map("error" -> "no categories set"))
+      case Left(e) =>
+        InternalServerError(Map("error" -> s"Failed to load categories: ${e.getMessage}"))
+    }
+  }
+
+  /** Overwrites the saved category list. Body shape `{categories:[...]}`.
+    * Validated against `Categories.all` — any non-canonical entry is a
+    * 400; we don't silently drop them since that'd let a buggy client
+    * accumulate orphan tags forever. Empty list is allowed and means
+    * "user opted out of filtering" (UI shows everything). */
+  put("/users/me/categories") {
+    val uid = requireUid()
+    try {
+      val body = parsedBody.extract[CategoriesPayload]
+      val canonical = Categories.all.toSet
+      val invalid = body.categories.filterNot(canonical.contains)
+      if (invalid.nonEmpty) {
+        BadRequest(Map(
+          "error"   -> "categories contains non-canonical entries",
+          "invalid" -> invalid
+        ))
+      } else {
+        userService.saveCategories(uid, body.categories) match {
+          case Right(rows) if rows > 0 => Map("ok" -> true)
+          case Right(_) =>
+            // No row updated — the user record doesn't exist yet on the
+            // backend (likely raced with the upsertUser call from iOS
+            // login). Treat as a transient failure rather than a 404
+            // since the next sync will succeed.
+            InternalServerError(Map("error" -> "user record not found, retry after upsertUser"))
+          case Left(e) =>
+            InternalServerError(Map("error" -> s"Failed to save categories: ${e.getMessage}"))
+        }
+      }
+    } catch {
+      case e: MappingException =>
+        BadRequest(Map("error" -> s"Invalid request body: ${e.getMessage}"))
     }
   }
 

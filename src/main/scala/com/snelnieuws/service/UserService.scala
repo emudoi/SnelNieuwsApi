@@ -12,6 +12,12 @@ class UserService(
   def lastFrequency(uid: String): Either[Throwable, Option[Int]] =
     subscriptionRepository.lastFrequencyByUserId(uid)
 
+  def findCategories(uid: String): Either[Throwable, Option[List[String]]] =
+    userRepository.findCategories(uid)
+
+  def saveCategories(uid: String, categories: List[String]): Either[Throwable, Int] =
+    userRepository.saveCategories(uid, categories)
+
   def delete(uid: String): Either[Throwable, Int] =
     userRepository.deleteById(uid)
 }

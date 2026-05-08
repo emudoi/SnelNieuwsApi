@@ -293,6 +293,91 @@ class NewsServletV2Spec
     }
   }
 
+  "PUT /v2/users/me/categories + GET /v2/users/me/categories" should {
+    "round-trip a valid list" in {
+      requireDb()
+      // Use a fresh uid so we don't collide with state left by other tests.
+      // alice + bob are the two stub-mapped tokens; bob is unused elsewhere
+      // for users-row writes, so a clean slate.
+      post("/v2/users", """{"email":"bob@example.com"}""", withAuth("bob-token")) {
+        status shouldBe 200
+      }
+      put(
+        "/v2/users/me/categories",
+        """{"categories":["politics","finance","health"]}""",
+        withAuth("bob-token")
+      ) {
+        status shouldBe 200
+      }
+      get("/v2/users/me/categories", Map.empty[String, String], withAuth("bob-token")) {
+        status shouldBe 200
+        val list = (org.json4s.jackson.parseJson(body) \ "categories").extract[List[String]]
+        list shouldBe List("politics", "finance", "health")
+      }
+    }
+
+    "accept an empty list (Skip-mode equivalent)" in {
+      requireDb()
+      post("/v2/users", """{"email":"bob@example.com"}""", withAuth("bob-token")) {
+        status shouldBe 200
+      }
+      put(
+        "/v2/users/me/categories",
+        """{"categories":[]}""",
+        withAuth("bob-token")
+      ) {
+        status shouldBe 200
+      }
+      // GET returns Some([]) — the route maps it to a 200 with empty list,
+      // distinct from 404 which means "never saved".
+      get("/v2/users/me/categories", Map.empty[String, String], withAuth("bob-token")) {
+        status shouldBe 200
+        val list = (org.json4s.jackson.parseJson(body) \ "categories").extract[List[String]]
+        list shouldBe empty
+      }
+    }
+
+    "reject non-canonical entries with 400" in {
+      requireDb()
+      post("/v2/users", """{"email":"bob@example.com"}""", withAuth("bob-token")) {
+        status shouldBe 200
+      }
+      put(
+        "/v2/users/me/categories",
+        """{"categories":["politics","not-a-real-category"]}""",
+        withAuth("bob-token")
+      ) {
+        status shouldBe 400
+        body should include("not-a-real-category")
+      }
+    }
+
+    "PUT returns 401 without Bearer (gate passes, route auth fails)" in {
+      requireDb()
+      put("/v2/users/me/categories", """{"categories":[]}""", gatedHeaders) {
+        status shouldBe 401
+      }
+    }
+
+    "GET returns 404 when the user has never saved a list" in {
+      requireDb()
+      // Force the column to NULL so the test is order-independent —
+      // earlier tests using alice-token may have written rows but only
+      // the categories column matters here.
+      import doobie.implicits._
+      import cats.effect.unsafe.implicits.global
+      post("/v2/users", """{"email":"alice@example.com"}""", withAuth("alice-token")) {
+        status shouldBe 200
+      }
+      sql"UPDATE users SET selected_categories = NULL WHERE id = 'uid-alice'"
+        .update.run.transact(com.snelnieuws.db.Database.transactor).unsafeRunSync()
+
+      get("/v2/users/me/categories", Map.empty[String, String], withAuth("alice-token")) {
+        status shouldBe 404
+      }
+    }
+  }
+
   "DELETE /v2/users/me" should {
     "delete the user and any deviceId in the query string" in {
       requireDb()
