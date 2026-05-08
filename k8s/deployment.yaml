@@ -95,7 +95,7 @@ spec:
               exec java -jar app.jar
           env:
             - name: KAFKA_SUMMARIZED_IMPORT_ENABLED
-              value: "false"
+              value: "true"
           ports:
             - name: http
               containerPort: 8080
