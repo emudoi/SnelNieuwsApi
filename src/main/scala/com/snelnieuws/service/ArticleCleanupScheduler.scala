@@ -7,6 +7,14 @@ import java.time.OffsetDateTime
 import java.util.concurrent.{Executors, ScheduledExecutorService, ThreadFactory, TimeUnit}
 import java.util.concurrent.atomic.AtomicBoolean
 
+object ArticleCleanupScheduler {
+  /** Floor on the table size — cleanup is skipped while the count is below
+    * this. Guards against the table being drained to zero when ingestion
+    * stops (the producer side has been disabled before; combined with
+    * cleanup it emptied the table and the iOS feed went blank). */
+  val MinArticleCount: Int = 20
+}
+
 /**
  * Periodically deletes articles whose `published_at` is older than `retentionHours`.
  * Driven by a single-thread daemon scheduler — survives transient DB errors by logging
@@ -61,14 +69,24 @@ class ArticleCleanupScheduler(
   }
 
   private def runOnce(): Unit = {
-    val cutoff = OffsetDateTime.now().minusHours(retentionHours)
-    articleRepository.deletePublishedBefore(cutoff) match {
-      case Right(deleted) if deleted > 0 =>
-        logger.info(s"Cleanup: deleted $deleted article(s) older than $cutoff")
+    articleRepository.count() match {
+      case Right(total) if total < ArticleCleanupScheduler.MinArticleCount =>
+        logger.info(
+          s"Cleanup: skipped — only $total article(s), below floor of " +
+            s"${ArticleCleanupScheduler.MinArticleCount}"
+        )
       case Right(_) =>
-        logger.debug(s"Cleanup: no articles older than $cutoff")
+        val cutoff = OffsetDateTime.now().minusHours(retentionHours)
+        articleRepository.deletePublishedBefore(cutoff) match {
+          case Right(deleted) if deleted > 0 =>
+            logger.info(s"Cleanup: deleted $deleted article(s) older than $cutoff")
+          case Right(_) =>
+            logger.debug(s"Cleanup: no articles older than $cutoff")
+          case Left(e) =>
+            logger.error(s"Article cleanup tick failed: ${e.getMessage}", e)
+        }
       case Left(e) =>
-        logger.error(s"Article cleanup tick failed: ${e.getMessage}", e)
+        logger.error(s"Article cleanup tick failed (count): ${e.getMessage}", e)
     }
   }
 }

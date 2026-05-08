@@ -130,6 +130,19 @@ class ArticleRepository(provideTransactor: => HikariTransactor[IO]) {
         Left(e)
     }
 
+  def count(): Either[Throwable, Int] =
+    try
+      Right(
+        sql"SELECT COUNT(*) FROM articles".query[Int].unique
+          .transact(transactor)
+          .unsafeRunSync()
+      )
+    catch {
+      case e: Exception =>
+        logger.error(s"Failed to count articles: ${e.getMessage}", e)
+        Left(e)
+    }
+
   /** Count articles whose id is greater than `sinceId`. When `sinceId` is None
    *  (no prior dispatch), counts all articles in the table.
    */
