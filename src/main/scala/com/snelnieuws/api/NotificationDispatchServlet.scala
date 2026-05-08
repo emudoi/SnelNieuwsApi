@@ -6,10 +6,14 @@ import org.scalatra._
 import org.scalatra.json.JacksonJsonSupport
 import org.slf4j.LoggerFactory
 
-/** Mounted at the exact path `/notifications/dispatch`. Auth is unchanged
-  * from when this lived inside NewsServlet: the caller (Airflow) presents
-  * `X-API-Key`, no Firebase token, no v2 client gate. Behavior is byte-
-  * for-byte the same — only the carrier servlet has changed.
+/** Mounted at exact paths `/notifications/dispatch` (production) and
+  * `/notifications/dispatch-sandbox` (Xcode-debug installs). Auth is the
+  * same shared-secret X-API-Key that's been here since this lived inside
+  * NewsServlet — no Firebase token, no v2 client gate. The only thing
+  * that varies between the two mounts is `environment`, which selects
+  * which APNs client (api.push.apple.com vs api.sandbox.push.apple.com)
+  * NotificationService routes through and which subset of subscription
+  * tokens it queries.
   *
   * Kept separate from v2 deliberately: bringing dispatch under the v2
   * gate would force Airflow to also send X-Client + X-Client-Key, and
@@ -17,7 +21,8 @@ import org.slf4j.LoggerFactory
   */
 class NotificationDispatchServlet(
   notificationService: NotificationService,
-  notificationsApiKey: String
+  notificationsApiKey: String,
+  environment: String
 ) extends ScalatraServlet
     with JacksonJsonSupport {
 
@@ -49,7 +54,7 @@ class NotificationDispatchServlet(
       } else if (frequencyOpt.exists(f => f < 1 || f > 4)) {
         BadRequest(Map("error" -> "frequency must be between 1 and 4"))
       } else {
-        notificationService.dispatch(frequencyOpt) match {
+        notificationService.dispatch(frequencyOpt, environment) match {
           case Right(DispatchOutcome.Sent(response)) => response
           case Right(DispatchOutcome.Disabled) =>
             ServiceUnavailable(Map("error" -> "notifications disabled"))

@@ -20,10 +20,15 @@ class NotificationServiceSpec
   private lazy val subRepo          = new NotificationSubscriptionRepository(Database.transactor)
   private lazy val dispatchRepo     = new NotificationDispatchRepository(Database.transactor)
 
+  private def newService(apnsProd: Option[ApnsMessagingService] = None,
+                         apnsSandbox: Option[ApnsMessagingService] = None) =
+    new NotificationService(articleRepo, subRepo, dispatchRepo,
+      apnsProd = apnsProd, apnsSandbox = apnsSandbox)
+
   "subscribe" should {
     "upsert a subscription row" in {
       requireDb()
-      val service = new NotificationService(articleRepo, subRepo, dispatchRepo, apns = None)
+      val service = newService()
       val req = SubscribeRequest(
         deviceId  = "ns-spec-device-1",
         apnsToken = "ns-spec-token-1",
@@ -42,10 +47,14 @@ class NotificationServiceSpec
   }
 
   "dispatch" should {
-    "return Disabled when apns is None" in {
+    "return Disabled when the matching apns client is None" in {
       requireDb()
-      val service = new NotificationService(articleRepo, subRepo, dispatchRepo, apns = None)
-      service.dispatch(frequency = None) match {
+      val service = newService()
+      service.dispatch(frequency = None, environment = "production") match {
+        case Right(DispatchOutcome.Disabled) => succeed
+        case other                           => fail(s"Expected Disabled, got: $other")
+      }
+      service.dispatch(frequency = None, environment = "sandbox") match {
         case Right(DispatchOutcome.Disabled) => succeed
         case other                           => fail(s"Expected Disabled, got: $other")
       }
@@ -54,10 +63,10 @@ class NotificationServiceSpec
     "return Sent with sent=0 when there are no tokens for the frequency" in {
       requireDb()
       val stub    = new StubApnsMessagingService(acceptAll = true)
-      val service = new NotificationService(articleRepo, subRepo, dispatchRepo, apns = Some(stub))
+      val service = newService(apnsProd = Some(stub))
 
       // Use a frequency tier we know has no subscribers.
-      service.dispatch(frequency = Some(3)) match {
+      service.dispatch(frequency = Some(3), environment = "production") match {
         case Right(DispatchOutcome.Sent(resp)) =>
           resp.sent shouldBe 0
           resp.failed shouldBe 0
@@ -69,9 +78,9 @@ class NotificationServiceSpec
     "send to subscribers for the given frequency when there are new articles" in {
       requireDb()
       val stub    = new StubApnsMessagingService(acceptAll = true)
-      val service = new NotificationService(articleRepo, subRepo, dispatchRepo, apns = Some(stub))
+      val service = newService(apnsProd = Some(stub))
 
-      // Subscribe a unique device on frequency=2.
+      // Subscribe a unique device on frequency=2 (default environment=production).
       service.subscribe(
         SubscribeRequest(
           deviceId  = "ns-spec-device-2",
@@ -93,7 +102,7 @@ class NotificationServiceSpec
         )
       ) shouldBe a[Right[_, _]]
 
-      service.dispatch(frequency = Some(2)) match {
+      service.dispatch(frequency = Some(2), environment = "production") match {
         case Right(DispatchOutcome.Sent(resp)) =>
           resp.sent should be >= 1
           resp.failed shouldBe 0
@@ -109,10 +118,10 @@ class NotificationServiceSpec
     "return Sent with newArticles=0 immediately after a previous dispatch with no inserts" in {
       requireDb()
       val stub    = new StubApnsMessagingService(acceptAll = true)
-      val service = new NotificationService(articleRepo, subRepo, dispatchRepo, apns = Some(stub))
+      val service = newService(apnsProd = Some(stub))
 
       // Frequency=2 was just dispatched in the previous test — no fresh inserts here.
-      service.dispatch(frequency = Some(2)) match {
+      service.dispatch(frequency = Some(2), environment = "production") match {
         case Right(DispatchOutcome.Sent(resp)) =>
           resp.newArticles shouldBe 0
           resp.sent shouldBe 0
@@ -121,6 +130,53 @@ class NotificationServiceSpec
           fail(s"Expected Sent, got: $other")
       }
       stub.batches shouldBe empty
+    }
+
+    "route sandbox dispatches to the sandbox client and skip production tokens" in {
+      requireDb()
+      val prodStub    = new StubApnsMessagingService(acceptAll = true)
+      val sandboxStub = new StubApnsMessagingService(acceptAll = true)
+      val service     = newService(apnsProd = Some(prodStub), apnsSandbox = Some(sandboxStub))
+
+      // One sandbox-tagged subscriber + one production-tagged subscriber on freq=4.
+      service.subscribe(
+        SubscribeRequest(
+          deviceId    = "ns-spec-device-sandbox",
+          apnsToken   = "ns-spec-token-sandbox",
+          frequency   = 4,
+          environment = "sandbox"
+        )
+      ) shouldBe a[Right[_, _]]
+      service.subscribe(
+        SubscribeRequest(
+          deviceId    = "ns-spec-device-prod",
+          apnsToken   = "ns-spec-token-prod",
+          frequency   = 4,
+          environment = "production"
+        )
+      ) shouldBe a[Right[_, _]]
+
+      // Fresh article so we actually attempt sends.
+      articleRepo.create(
+        ArticleCreate(
+          author      = Some("ns-spec"),
+          title       = "NotificationServiceSpec sandbox routing",
+          description = None,
+          url         = "https://example.com/ns-spec/sandbox",
+          urlToImage  = None,
+          content     = None,
+          category    = Some("ns-spec")
+        )
+      ) shouldBe a[Right[_, _]]
+
+      service.dispatch(frequency = Some(4), environment = "sandbox") match {
+        case Right(DispatchOutcome.Sent(_)) => succeed
+        case other                          => fail(s"Expected Sent, got: $other")
+      }
+
+      sandboxStub.batches.flatMap(_.tokens) should contain("ns-spec-token-sandbox")
+      sandboxStub.batches.flatMap(_.tokens) should not contain "ns-spec-token-prod"
+      prodStub.batches shouldBe empty
     }
   }
 }

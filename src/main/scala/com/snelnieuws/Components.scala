@@ -44,6 +44,7 @@ class Components(
   provideTransactor: => HikariTransactor[IO],
   rootConfig: Config,
   apns: Option[ApnsMessagingService],
+  apnsSandbox: Option[ApnsMessagingService],
   verifierOverride: Option[FirebaseTokenVerifier] = None
 ) {
 
@@ -157,7 +158,8 @@ class Components(
       articleRepository,
       notificationSubscriptionRepository,
       notificationDispatchRepository,
-      apns
+      apnsProd    = apns,
+      apnsSandbox = apnsSandbox
     )
 
   lazy val userService: UserService =
@@ -219,7 +221,17 @@ class Components(
       firebaseVerifier
     )
   lazy val notificationDispatchServlet: NotificationDispatchServlet =
-    new NotificationDispatchServlet(notificationService, notificationsApiKey)
+    new NotificationDispatchServlet(
+      notificationService,
+      notificationsApiKey,
+      environment = "production"
+    )
+  lazy val notificationDispatchSandboxServlet: NotificationDispatchServlet =
+    new NotificationDispatchServlet(
+      notificationService,
+      notificationsApiKey,
+      environment = "sandbox"
+    )
   lazy val staticContentServlet: StaticContentServlet =
     new StaticContentServlet
   lazy val healthServlet: HealthServlet =
@@ -253,46 +265,57 @@ object Components {
   private val logger = LoggerFactory.getLogger(classOf[Components])
 
   def default(): Components = {
-    val cfg  = ConfigFactory.load()
-    val apns = buildApnsFromConfig(cfg)
+    val cfg = ConfigFactory.load()
+    val (apns, apnsSandbox) = buildApnsBoth(cfg)
     new Components(
       provideTransactor = Database.transactor,
       rootConfig = cfg,
-      apns = apns
+      apns = apns,
+      apnsSandbox = apnsSandbox
     )
   }
 
-  // APNs is only built when notifications are enabled AND config is valid AND
-  // the .p8 key file exists. Init failures are fail-soft: dispatch will report
-  // "disabled" until the next deploy fixes the config.
-  private def buildApnsFromConfig(cfg: Config): Option[ApnsMessagingService] = {
+  // Build both APNs clients from one config block. The sandbox config-level
+  // `sandbox` flag is overridden — prod always targets api.push.apple.com,
+  // sandbox always targets api.sandbox.push.apple.com. Same .p8 signs both;
+  // Apple .p8 keys are environment-agnostic.
+  //
+  // Both clients are built only when notifications are enabled AND keyId/
+  // teamId/.p8 are valid. Init failures are fail-soft: the affected
+  // dispatch endpoint will report "disabled" until the next deploy fixes
+  // the config.
+  private def buildApnsBoth(
+    cfg: Config
+  ): (Option[ApnsMessagingService], Option[ApnsMessagingService]) = {
     val notifCfg = cfg.getConfig("notifications")
     if (!notifCfg.getBoolean("enabled")) {
       logger.info("Notifications are disabled (notifications.enabled=false)")
-      None
+      (None, None)
     } else {
       val apnsCfg = notifCfg.getConfig("apns")
-      val ac = ApnsConfig(
+      val baseCfg = ApnsConfig(
         keyPath  = apnsCfg.getString("key-path"),
         keyId    = apnsCfg.getString("key-id"),
         teamId   = apnsCfg.getString("team-id"),
         bundleId = apnsCfg.getString("bundle-id"),
-        sandbox  = apnsCfg.getBoolean("sandbox")
+        sandbox  = false
       )
-      if (ac.keyId.isEmpty || ac.teamId.isEmpty) {
+      if (baseCfg.keyId.isEmpty || baseCfg.teamId.isEmpty) {
         logger.warn("Notifications enabled but APNs key-id or team-id missing — dispatch will be a no-op")
-        None
-      } else if (!Files.exists(Paths.get(ac.keyPath))) {
-        logger.warn(s"Notifications enabled but APNs key file not found at ${ac.keyPath} — dispatch will be a no-op")
-        None
+        (None, None)
+      } else if (!Files.exists(Paths.get(baseCfg.keyPath))) {
+        logger.warn(s"Notifications enabled but APNs key file not found at ${baseCfg.keyPath} — dispatch will be a no-op")
+        (None, None)
       } else {
         try {
           val subRepo = new NotificationSubscriptionRepository(Database.transactor)
-          Some(new PushyApnsMessagingService(subRepo, ac))
+          val prod    = new PushyApnsMessagingService(subRepo, baseCfg)
+          val sand    = new PushyApnsMessagingService(subRepo, baseCfg.copy(sandbox = true))
+          (Some(prod), Some(sand))
         } catch {
           case e: Exception =>
-            logger.error(s"Failed to initialize APNs client: ${e.getMessage}", e)
-            None
+            logger.error(s"Failed to initialize APNs clients: ${e.getMessage}", e)
+            (None, None)
         }
       }
     }

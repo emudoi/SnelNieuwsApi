@@ -31,7 +31,12 @@ class ScalatraBootstrap extends LifeCycle {
     // declaration order (Servlet API spec). Each of the routes below was
     // previously a Scalatra route inside NewsServlet; extracting them into
     // their own servlets is a no-op for callers — same URLs, same auth.
+    // Two dispatch endpoints behind the same X-API-Key. The path is the
+    // only thing that varies between them — production targets
+    // api.push.apple.com (App Store + TestFlight tokens), sandbox targets
+    // api.sandbox.push.apple.com (Xcode-debug install tokens).
     context.mount(components.notificationDispatchServlet, "/notifications/dispatch")
+    context.mount(components.notificationDispatchSandboxServlet, "/notifications/dispatch-sandbox")
     context.mount(components.staticContentServlet, "/privacy")
     context.mount(components.staticContentServlet, "/support")
     // /v2/images/* is mounted as its own open servlet (no X-Client /

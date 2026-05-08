@@ -16,15 +16,27 @@ object DispatchOutcome {
   case class Sent(response: DispatchResponse)   extends DispatchOutcome
 }
 
-/** Owns the subscribe + dispatch flows. APNs is optional — when None
- *  (notifications disabled or APNs init failed at boot), dispatch returns
+object NotificationEnvironment {
+  val Production = "production"
+  val Sandbox    = "sandbox"
+}
+
+/** Owns the subscribe + dispatch flows. APNs is optional per environment —
+ *  when the matching client is None (notifications disabled, init failed,
+ *  or that environment was never configured), dispatch returns
  *  `DispatchOutcome.Disabled` and the servlet maps that to 503.
+ *
+ *  Two clients exist because APNs sandbox tokens (Xcode-debug builds) only
+ *  work against api.sandbox.push.apple.com and production tokens (TestFlight
+ *  + App Store) only work against api.push.apple.com. Same .p8 signs both
+ *  — they differ only in which Apple host they target.
  */
 class NotificationService(
   articleRepository: ArticleRepository,
   subscriptionRepository: NotificationSubscriptionRepository,
   dispatchRepository: NotificationDispatchRepository,
-  apns: Option[ApnsMessagingService]
+  apnsProd: Option[ApnsMessagingService],
+  apnsSandbox: Option[ApnsMessagingService]
 ) {
 
   private val logger = LoggerFactory.getLogger(classOf[NotificationService])
@@ -34,7 +46,14 @@ class NotificationService(
     userId: Option[String] = None,
     clientId: Option[UUID] = None
   ): Either[Throwable, Int] =
-    subscriptionRepository.upsert(req.deviceId, req.apnsToken, req.frequency, userId, clientId)
+    subscriptionRepository.upsert(
+      req.deviceId,
+      req.apnsToken,
+      req.frequency,
+      req.environment,
+      userId,
+      clientId
+    )
 
   /** Delete a single device's subscription regardless of whether it was
     * linked to a user. Used by account-deletion to clean up rows whose
@@ -42,21 +61,29 @@ class NotificationService(
   def deleteDevice(deviceId: String): Either[Throwable, Int] =
     subscriptionRepository.deleteByDeviceId(deviceId)
 
-  def dispatch(frequency: Option[Int]): Either[Throwable, DispatchOutcome] = {
-    apns match {
+  def dispatch(
+    frequency: Option[Int],
+    environment: String
+  ): Either[Throwable, DispatchOutcome] = {
+    val client = environment match {
+      case NotificationEnvironment.Sandbox => apnsSandbox
+      case _                               => apnsProd
+    }
+    client match {
       case None =>
         Right(DispatchOutcome.Disabled)
-      case Some(client) =>
+      case Some(c) =>
         for {
-          lastAsOf    <- dispatchRepository.findLastAsOfArticleId(frequency)
+          lastAsOf    <- dispatchRepository.findLastAsOfArticleId(frequency, environment)
           newArticles <- articleRepository.countSinceId(lastAsOf)
           currentMax  <- articleRepository.latestId()
           title        = if (newArticles == 1) "1 new article" else s"$newArticles new articles"
           body         = "Check them out in Snel Nieuws"
-          sentFailed  <- sendIfAny(client, frequency, newArticles, title, body)
+          sentFailed  <- sendIfAny(c, frequency, environment, newArticles, title, body)
           (sent, failed) = sentFailed
           _           <- dispatchRepository.recordDispatch(
             frequency = frequency,
+            environment = environment,
             asOfArticleId = currentMax,
             newArticles = newArticles,
             sent = sent,
@@ -71,6 +98,7 @@ class NotificationService(
   private def sendIfAny(
     client: ApnsMessagingService,
     frequency: Option[Int],
+    environment: String,
     newArticles: Int,
     title: String,
     body: String
@@ -78,8 +106,8 @@ class NotificationService(
     if (newArticles == 0) Right((0, 0))
     else {
       val tokensE = frequency match {
-        case Some(f) => subscriptionRepository.findTokensByFrequency(f)
-        case None    => subscriptionRepository.findAllTokens()
+        case Some(f) => subscriptionRepository.findTokensByFrequencyAndEnvironment(f, environment)
+        case None    => subscriptionRepository.findAllTokensByEnvironment(environment)
       }
       tokensE.map(tokens => client.sendBatch(tokens, title, body))
     }

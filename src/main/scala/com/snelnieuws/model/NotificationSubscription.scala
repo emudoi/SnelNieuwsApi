@@ -11,7 +11,11 @@ case class NotificationSubscription(
 case class SubscribeRequest(
   deviceId: String,
   apnsToken: String,
-  frequency: Int
+  frequency: Int,
+  // "production" | "sandbox". Defaults to "production" so iOS builds that
+  // predate the field keep working — old binaries can only have shipped
+  // production tokens (no sandbox build path existed before this change).
+  environment: String = "production"
 )
 
 case class DispatchResponse(

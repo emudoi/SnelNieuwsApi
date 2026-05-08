@@ -27,6 +27,7 @@ class NotificationSubscriptionRepository(provideTransactor: => HikariTransactor[
     deviceId: String,
     apnsToken: String,
     frequency: Int,
+    environment: String,
     userId: Option[String] = None,
     clientId: Option[UUID] = None
   ): Either[Throwable, Int] = {
@@ -44,14 +45,16 @@ class NotificationSubscriptionRepository(provideTransactor: => HikariTransactor[
     // COALESCE keeps any existing client_id if the new one is NULL.
     val upsertSubscription: ConnectionIO[Int] =
       sql"""
-        INSERT INTO notification_subscriptions (device_id, apns_token, frequency, user_id, client_id)
-        VALUES ($deviceId, $apnsToken, $frequency, $userId, $clientId)
+        INSERT INTO notification_subscriptions
+          (device_id, apns_token, frequency, apns_environment, user_id, client_id)
+        VALUES ($deviceId, $apnsToken, $frequency, $environment, $userId, $clientId)
         ON CONFLICT (device_id) DO UPDATE SET
-          apns_token = EXCLUDED.apns_token,
-          frequency  = EXCLUDED.frequency,
-          user_id    = EXCLUDED.user_id,
-          client_id  = COALESCE(EXCLUDED.client_id, notification_subscriptions.client_id),
-          updated_at = NOW()
+          apns_token       = EXCLUDED.apns_token,
+          frequency        = EXCLUDED.frequency,
+          apns_environment = EXCLUDED.apns_environment,
+          user_id          = EXCLUDED.user_id,
+          client_id        = COALESCE(EXCLUDED.client_id, notification_subscriptions.client_id),
+          updated_at       = NOW()
       """.update.run
 
     try
@@ -81,6 +84,26 @@ class NotificationSubscriptionRepository(provideTransactor: => HikariTransactor[
         Left(e)
     }
 
+  def findTokensByFrequencyAndEnvironment(
+    frequency: Int,
+    environment: String
+  ): Either[Throwable, List[String]] =
+    try
+      Right(
+        sql"""
+          SELECT apns_token FROM notification_subscriptions
+          WHERE frequency = $frequency AND apns_environment = $environment
+        """.query[String].to[List].transact(transactor).unsafeRunSync()
+      )
+    catch {
+      case e: Exception =>
+        logger.error(
+          s"Failed to fetch tokens for frequency=$frequency env=$environment: ${e.getMessage}",
+          e
+        )
+        Left(e)
+    }
+
   def findAllTokens(): Either[Throwable, List[String]] =
     try
       Right(
@@ -91,6 +114,23 @@ class NotificationSubscriptionRepository(provideTransactor: => HikariTransactor[
     catch {
       case e: Exception =>
         logger.error(s"Failed to fetch all subscription tokens: ${e.getMessage}", e)
+        Left(e)
+    }
+
+  def findAllTokensByEnvironment(environment: String): Either[Throwable, List[String]] =
+    try
+      Right(
+        sql"""
+          SELECT apns_token FROM notification_subscriptions
+          WHERE apns_environment = $environment
+        """.query[String].to[List].transact(transactor).unsafeRunSync()
+      )
+    catch {
+      case e: Exception =>
+        logger.error(
+          s"Failed to fetch all tokens for env=$environment: ${e.getMessage}",
+          e
+        )
         Left(e)
     }
 

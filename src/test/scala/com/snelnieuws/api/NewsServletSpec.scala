@@ -45,6 +45,7 @@ class NewsServletSpec
     provideTransactor = Database.transactor,
     rootConfig = testConfig,
     apns = Some(stubApns),
+    apnsSandbox = None,
     verifierOverride = Some(stubVerifier)
   )
 

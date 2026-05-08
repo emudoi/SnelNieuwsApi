@@ -49,6 +49,7 @@ class UserRepositorySpec
         "user-repo-spec-selfheal-device",
         "selfheal-token",
         2,
+        environment = "production",
         userId = Some(uid)
       ) shouldBe a[Right[_, _]]
 
@@ -73,6 +74,7 @@ class UserRepositorySpec
         "user-repo-spec-selfheal-existing-device",
         "tok",
         2,
+        environment = "production",
         userId = Some(uid)
       ) shouldBe a[Right[_, _]]
 
@@ -90,6 +92,7 @@ class UserRepositorySpec
         "user-repo-spec-device-1",
         "cascade-token-1",
         2,
+        environment = "production",
         userId = Some(uid)
       ) shouldBe a[Right[_, _]]
       // Sanity: the subscription row is linked to this user.
@@ -120,8 +123,8 @@ class UserRepositorySpec
 
       // Two devices on different frequencies, both linked to the same user.
       // The second one is upserted last so it's the most-recent update.
-      subRepo.upsert("user-repo-spec-device-A", "tok-A", 1, Some(uid)) shouldBe a[Right[_, _]]
-      subRepo.upsert("user-repo-spec-device-B", "tok-B", 4, Some(uid)) shouldBe a[Right[_, _]]
+      subRepo.upsert("user-repo-spec-device-A", "tok-A", 1, "production", Some(uid)) shouldBe a[Right[_, _]]
+      subRepo.upsert("user-repo-spec-device-B", "tok-B", 4, "production", Some(uid)) shouldBe a[Right[_, _]]
 
       subRepo.lastFrequencyByUserId(uid) shouldBe Right(Some(4))
     }
