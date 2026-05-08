@@ -76,4 +76,7 @@ def _make_dispatch_dag(frequency: int, dag_id: str, schedule: str, description: 
 
 
 for freq, _dag_id, _schedule, _desc in TIERS:
-    _make_dispatch_dag(freq, _dag_id, _schedule, _desc)
+    # Bind to module globals so Airflow's DagBag scanner finds each DAG —
+    # the @dag-decorated factory returns a DAG object, but the loop would
+    # otherwise discard it.
+    globals()[_dag_id] = _make_dispatch_dag(freq, _dag_id, _schedule, _desc)
