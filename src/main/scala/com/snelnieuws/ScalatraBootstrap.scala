@@ -37,6 +37,9 @@ class ScalatraBootstrap extends LifeCycle {
     // api.sandbox.push.apple.com (Xcode-debug install tokens).
     context.mount(components.notificationDispatchServlet, "/notifications/dispatch")
     context.mount(components.notificationDispatchSandboxServlet, "/notifications/dispatch-sandbox")
+    // Broadcast endpoint — fans out a free-form text to either or both
+    // environments based on feature_flags.is_enabled. Same X-API-Key auth.
+    context.mount(components.notificationBroadcastServlet, "/notifications/broadcast")
     context.mount(components.staticContentServlet, "/privacy")
     context.mount(components.staticContentServlet, "/support")
     // /v2/images/* is mounted as its own open servlet (no X-Client /

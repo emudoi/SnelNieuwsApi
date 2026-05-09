@@ -31,8 +31,9 @@ from airflow.decorators import dag, task
 from airflow.models import Variable
 from airflow.models.param import Param
 
-PROD_ENDPOINT    = "https://api.snel.emudoi.com/notifications/dispatch"
-SANDBOX_ENDPOINT = "https://api.snel.emudoi.com/notifications/dispatch-sandbox"
+PROD_ENDPOINT      = "https://api.snel.emudoi.com/notifications/dispatch"
+SANDBOX_ENDPOINT   = "https://api.snel.emudoi.com/notifications/dispatch-sandbox"
+BROADCAST_ENDPOINT = "https://api.snel.emudoi.com/notifications/broadcast"
 
 DISPATCH_TIMEOUT_S = 60
 
@@ -88,3 +89,55 @@ globals()["snelnieuws_notifications_sandbox_manual"] = _make_manual_dag(
     SANDBOX_ENDPOINT,
     "Manually dispatch SnelNieuws push notifications to SANDBOX subscribers (Xcode-debug installs).",
 )
+
+
+def _make_broadcast_dag():
+    """Manual DAG that POSTs a free-form text to /notifications/broadcast.
+
+    The API decides which environments actually receive the push by reading
+    the `feature_flags` table — `test_notification` gates the sandbox path,
+    `notify_applestore_apps` gates the production path. Flip those rows in
+    psql to enable/disable each side without redeploying.
+    """
+    @dag(
+        dag_id="snelnieuws_notifications_broadcast_manual",
+        description="Send a free-form push to whichever environment(s) feature_flags has enabled.",
+        schedule=None,
+        start_date=pendulum.datetime(2026, 5, 1, tz="Europe/Amsterdam"),
+        catchup=False,
+        max_active_runs=1,
+        params={
+            "text": Param(
+                default="",
+                type="string",
+                minLength=1,
+                description="The message body for the push (alert title is hardcoded to 'Snel Nieuws').",
+            ),
+        },
+        tags=["snelnieuws", "notifications", "manual", "broadcast"],
+    )
+    def _dag():
+        @task
+        def broadcast(**context) -> dict:
+            api_key = Variable.get("snelnieuws_notifications_api_key")
+            text = (context["params"].get("text") or "").strip()
+            if not text:
+                raise ValueError("text is required")
+            r = requests.post(
+                BROADCAST_ENDPOINT,
+                json={"text": text},
+                headers={
+                    "X-API-Key": api_key,
+                    "Content-Type": "application/json",
+                },
+                timeout=DISPATCH_TIMEOUT_S,
+            )
+            r.raise_for_status()
+            return r.json()
+
+        broadcast()
+
+    return _dag()
+
+
+globals()["snelnieuws_notifications_broadcast_manual"] = _make_broadcast_dag()

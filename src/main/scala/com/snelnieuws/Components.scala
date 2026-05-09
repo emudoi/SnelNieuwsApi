@@ -6,6 +6,7 @@ import com.snelnieuws.api.{
   ImageServlet,
   NewsServlet,
   NewsServletV2,
+  NotificationBroadcastServlet,
   NotificationDispatchServlet,
   StaticContentServlet
 }
@@ -15,6 +16,7 @@ import com.snelnieuws.kafka.SummarizedImportKafkaConfig
 import com.snelnieuws.repository.{
   AppClientRepository,
   ArticleRepository,
+  FeatureFlagRepository,
   ImageCacheRepository,
   NotificationDispatchRepository,
   NotificationSubscriptionRepository,
@@ -63,6 +65,8 @@ class Components(
     new AppClientRepository(provideTransactor)
   lazy val imageCacheRepository: ImageCacheRepository =
     new ImageCacheRepository(provideTransactor)
+  lazy val featureFlagRepository: FeatureFlagRepository =
+    new FeatureFlagRepository(provideTransactor)
 
   // Image cache config — single source of truth read once on construct.
   private val imagesCfg = rootConfig.getConfig("images")
@@ -158,6 +162,7 @@ class Components(
       articleRepository,
       notificationSubscriptionRepository,
       notificationDispatchRepository,
+      featureFlagRepository,
       apnsProd    = apns,
       apnsSandbox = apnsSandbox
     )
@@ -232,6 +237,8 @@ class Components(
       notificationsApiKey,
       environment = "sandbox"
     )
+  lazy val notificationBroadcastServlet: NotificationBroadcastServlet =
+    new NotificationBroadcastServlet(notificationService, notificationsApiKey)
   lazy val staticContentServlet: StaticContentServlet =
     new StaticContentServlet
   lazy val healthServlet: HealthServlet =

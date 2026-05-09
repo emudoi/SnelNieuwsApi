@@ -42,3 +42,27 @@ case class RegisterClientRequest(
 )
 
 case class CategoriesPayload(categories: List[String])
+
+case class FeatureFlag(
+  id: Long,
+  feature: String,
+  isEnabled: Boolean
+)
+
+case class BroadcastRequest(text: String)
+
+/** Per-environment broadcast outcome. `enabled` reflects the feature flag
+  * read from the DB at request time; `sent`/`failed` come from APNs.
+  * `enabled=true, sent=0, failed=0` legitimately means "the flag was on
+  * but there were no subscribers in that environment, or the matching
+  * APNs client wasn't initialized at boot". */
+case class BroadcastEnvResult(
+  enabled: Boolean,
+  sent: Int,
+  failed: Int
+)
+
+case class BroadcastResponse(
+  production: BroadcastEnvResult,
+  sandbox: BroadcastEnvResult
+)

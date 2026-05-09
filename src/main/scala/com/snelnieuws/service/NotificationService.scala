@@ -1,8 +1,14 @@
 package com.snelnieuws.service
 
-import com.snelnieuws.model.{DispatchResponse, SubscribeRequest}
+import com.snelnieuws.model.{
+  BroadcastEnvResult,
+  BroadcastResponse,
+  DispatchResponse,
+  SubscribeRequest
+}
 import com.snelnieuws.repository.{
   ArticleRepository,
+  FeatureFlagRepository,
   NotificationDispatchRepository,
   NotificationSubscriptionRepository
 }
@@ -21,6 +27,15 @@ object NotificationEnvironment {
   val Sandbox    = "sandbox"
 }
 
+/** Names of the feature flags read by NotificationService.broadcast. The
+  * constants exist so a typo in code is a compile error rather than a
+  * silently-disabled broadcast (the repo treats unknown names as `false`).
+  */
+object BroadcastFeatureFlag {
+  val Sandbox    = "test_notification"
+  val Production = "notify_applestore_apps"
+}
+
 /** Owns the subscribe + dispatch flows. APNs is optional per environment —
  *  when the matching client is None (notifications disabled, init failed,
  *  or that environment was never configured), dispatch returns
@@ -35,6 +50,7 @@ class NotificationService(
   articleRepository: ArticleRepository,
   subscriptionRepository: NotificationSubscriptionRepository,
   dispatchRepository: NotificationDispatchRepository,
+  featureFlagRepository: FeatureFlagRepository,
   apnsProd: Option[ApnsMessagingService],
   apnsSandbox: Option[ApnsMessagingService]
 ) {
@@ -111,5 +127,48 @@ class NotificationService(
       }
       tokensE.map(tokens => client.sendBatch(tokens, title, body))
     }
+  }
+
+  /** Broadcast a free-form text to every subscriber in each environment
+    * whose feature flag is enabled. Independent of the per-frequency
+    * dispatch tracking — does not read or write `notification_dispatches`.
+    *
+    * Title is hardcoded to "Snel Nieuws"; the request body becomes the
+    * APNs alert body. Both flags can be enabled simultaneously, in which
+    * case the broadcast fans out to both environments in a single call.
+    */
+  def broadcast(text: String): Either[Throwable, BroadcastResponse] = {
+    val title = "Snel Nieuws"
+    for {
+      sandboxEnabled <- featureFlagRepository.isEnabled(BroadcastFeatureFlag.Sandbox)
+      prodEnabled    <- featureFlagRepository.isEnabled(BroadcastFeatureFlag.Production)
+      sandbox        <- broadcastTo(apnsSandbox, sandboxEnabled, NotificationEnvironment.Sandbox, title, text)
+      production     <- broadcastTo(apnsProd, prodEnabled, NotificationEnvironment.Production, title, text)
+    } yield BroadcastResponse(production = production, sandbox = sandbox)
+  }
+
+  private def broadcastTo(
+    client: Option[ApnsMessagingService],
+    enabled: Boolean,
+    environment: String,
+    title: String,
+    body: String
+  ): Either[Throwable, BroadcastEnvResult] = {
+    if (!enabled) Right(BroadcastEnvResult(enabled = false, sent = 0, failed = 0))
+    else
+      client match {
+        case None =>
+          // Flag is on but APNs init never succeeded for this environment
+          // (e.g. .p8 missing at boot). Surface enabled=true so the caller
+          // can tell the flag is on; sent/failed=0 signals nothing went
+          // out. The pod logs explain why.
+          logger.warn(s"broadcast: $environment flag is on but APNs client is not initialized")
+          Right(BroadcastEnvResult(enabled = true, sent = 0, failed = 0))
+        case Some(c) =>
+          subscriptionRepository.findAllTokensByEnvironment(environment).map { tokens =>
+            val (sent, failed) = c.sendBatch(tokens, title, body)
+            BroadcastEnvResult(enabled = true, sent = sent, failed = failed)
+          }
+      }
   }
 }

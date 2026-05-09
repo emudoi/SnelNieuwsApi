@@ -5,6 +5,7 @@ import com.snelnieuws.db.Database
 import com.snelnieuws.model.{ArticleCreate, SubscribeRequest}
 import com.snelnieuws.repository.{
   ArticleRepository,
+  FeatureFlagRepository,
   NotificationDispatchRepository,
   NotificationSubscriptionRepository
 }
@@ -19,10 +20,11 @@ class NotificationServiceSpec
   private lazy val articleRepo      = new ArticleRepository(Database.transactor)
   private lazy val subRepo          = new NotificationSubscriptionRepository(Database.transactor)
   private lazy val dispatchRepo     = new NotificationDispatchRepository(Database.transactor)
+  private lazy val flagRepo         = new FeatureFlagRepository(Database.transactor)
 
   private def newService(apnsProd: Option[ApnsMessagingService] = None,
                          apnsSandbox: Option[ApnsMessagingService] = None) =
-    new NotificationService(articleRepo, subRepo, dispatchRepo,
+    new NotificationService(articleRepo, subRepo, dispatchRepo, flagRepo,
       apnsProd = apnsProd, apnsSandbox = apnsSandbox)
 
   "subscribe" should {
@@ -177,6 +179,96 @@ class NotificationServiceSpec
       sandboxStub.batches.flatMap(_.tokens) should contain("ns-spec-token-sandbox")
       sandboxStub.batches.flatMap(_.tokens) should not contain "ns-spec-token-prod"
       prodStub.batches shouldBe empty
+    }
+  }
+
+  "broadcast" should {
+    "skip both environments when both flags are off" in {
+      requireDb()
+      // V15 seeds both flags as false; reset to be defensive against
+      // earlier tests that may have flipped them.
+      flagRepo.setEnabled("test_notification", false)       shouldBe a[Right[_, _]]
+      flagRepo.setEnabled("notify_applestore_apps", false)  shouldBe a[Right[_, _]]
+
+      val prodStub    = new StubApnsMessagingService(acceptAll = true)
+      val sandboxStub = new StubApnsMessagingService(acceptAll = true)
+      val service     = newService(apnsProd = Some(prodStub), apnsSandbox = Some(sandboxStub))
+
+      service.broadcast("hello") match {
+        case Right(resp) =>
+          resp.production.enabled shouldBe false
+          resp.production.sent    shouldBe 0
+          resp.sandbox.enabled    shouldBe false
+          resp.sandbox.sent       shouldBe 0
+        case other => fail(s"Expected Right(BroadcastResponse), got: $other")
+      }
+      prodStub.batches    shouldBe empty
+      sandboxStub.batches shouldBe empty
+    }
+
+    "fan out to only the sandbox environment when only that flag is on" in {
+      requireDb()
+      flagRepo.setEnabled("test_notification", true)        shouldBe a[Right[_, _]]
+      flagRepo.setEnabled("notify_applestore_apps", false)  shouldBe a[Right[_, _]]
+
+      val prodStub    = new StubApnsMessagingService(acceptAll = true)
+      val sandboxStub = new StubApnsMessagingService(acceptAll = true)
+      val service     = newService(apnsProd = Some(prodStub), apnsSandbox = Some(sandboxStub))
+
+      // A subscriber in each environment so we can verify only sandbox
+      // got the broadcast.
+      service.subscribe(
+        SubscribeRequest(
+          deviceId    = "ns-spec-broadcast-sand",
+          apnsToken   = "ns-spec-broadcast-token-sand",
+          frequency   = 1,
+          environment = "sandbox"
+        )
+      ) shouldBe a[Right[_, _]]
+      service.subscribe(
+        SubscribeRequest(
+          deviceId    = "ns-spec-broadcast-prod",
+          apnsToken   = "ns-spec-broadcast-token-prod",
+          frequency   = 1,
+          environment = "production"
+        )
+      ) shouldBe a[Right[_, _]]
+
+      service.broadcast("ping") match {
+        case Right(resp) =>
+          resp.sandbox.enabled    shouldBe true
+          resp.sandbox.sent       should be >= 1
+          resp.production.enabled shouldBe false
+          resp.production.sent    shouldBe 0
+        case other => fail(s"Expected Right(BroadcastResponse), got: $other")
+      }
+
+      sandboxStub.batches.flatMap(_.tokens) should contain("ns-spec-broadcast-token-sand")
+      sandboxStub.batches.flatMap(_.tokens) should not contain "ns-spec-broadcast-token-prod"
+      prodStub.batches shouldBe empty
+
+      // Reset for any later tests in this run.
+      flagRepo.setEnabled("test_notification", false)
+    }
+
+    "report enabled=true with sent=0 when the flag is on but the APNs client is None" in {
+      requireDb()
+      flagRepo.setEnabled("test_notification", true) shouldBe a[Right[_, _]]
+      flagRepo.setEnabled("notify_applestore_apps", false) shouldBe a[Right[_, _]]
+
+      // Both clients None — simulates broadcast firing on a pod that
+      // booted without valid APNs credentials.
+      val service = newService(apnsProd = None, apnsSandbox = None)
+      service.broadcast("ping") match {
+        case Right(resp) =>
+          resp.sandbox.enabled    shouldBe true
+          resp.sandbox.sent       shouldBe 0
+          resp.sandbox.failed     shouldBe 0
+          resp.production.enabled shouldBe false
+        case other => fail(s"Expected Right(BroadcastResponse), got: $other")
+      }
+
+      flagRepo.setEnabled("test_notification", false)
     }
   }
 }
