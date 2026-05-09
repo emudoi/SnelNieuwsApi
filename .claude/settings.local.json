@@ -58,7 +58,20 @@
       "Bash(sbt -no-colors -batch \"Test/compile\")",
       "Bash(chmod +x /Users/pranjutgogoi/workspace/emudoi/emudoi-snelnieuws-api/test-send-push.sh)",
       "Bash(./test-send-push.sh 5ecb7a1af061d4c0cb18209b64d778737b2919beda8f24c913bb77b7919e6108)",
-      "Bash(APNS_SANDBOX=false ./test-send-push.sh 5ecb7a1af061d4c0cb18209b64d778737b2919beda8f24c913bb77b7919e6108)"
+      "Bash(APNS_SANDBOX=false ./test-send-push.sh 5ecb7a1af061d4c0cb18209b64d778737b2919beda8f24c913bb77b7919e6108)",
+      "Bash(gh --version)",
+      "Bash(curl -sI https://api.snel.emudoi.com/v2/images/_fallback)",
+      "Bash(curl -s -H \"X-Client: ios/1.4.0\" -H \"X-Client-Key: 00000000-0000-0000-0000-000000000000\" https://api.snel.emudoi.com/v2/everything?pageSize=5 -o /tmp/v2-resp.json -w \"HTTP %{http_code}\\\\n\")",
+      "Read(//tmp/**)",
+      "Bash(curl -s -H \"X-Client: ios/1.4.0\" -H \"X-Client-Key: 00000000-0000-0000-0000-000000000000\" \"https://api.snel.emudoi.com/v2/everything?pageSize=5\" -o /tmp/v2-resp.json -w \"HTTP %{http_code}\\\\n\")",
+      "Bash(curl -s \"https://api.snel.emudoi.com/everything?pageSize=20\")",
+      "Bash(gh repo *)",
+      "Bash(gh run *)",
+      "Bash(sbt -batch -no-colors -warn compile)",
+      "Bash(sbt -batch compile)",
+      "Bash(sbt -batch \"clean; compile\")",
+      "Bash(sbt -batch \"Test/compile\")",
+      "Bash(sbt -batch test)"
     ]
   }
 }

@@ -31,8 +31,8 @@ from airflow.decorators import dag, task
 from airflow.models import Variable
 from airflow.models.param import Param
 
-PROD_ENDPOINT    = "https://api.snel.v1.emudoi.com/notifications/dispatch"
-SANDBOX_ENDPOINT = "https://api.snel.v1.emudoi.com/notifications/dispatch-sandbox"
+PROD_ENDPOINT    = "https://api.snel.emudoi.com/notifications/dispatch"
+SANDBOX_ENDPOINT = "https://api.snel.emudoi.com/notifications/dispatch-sandbox"
 
 DISPATCH_TIMEOUT_S = 60
 
