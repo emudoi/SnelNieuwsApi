@@ -105,4 +105,44 @@ class AndroidNotificationSubscriptionRepository(provideTransactor: => HikariTran
         logger.error(s"Failed to delete Android subscription deviceId=$deviceId: ${e.getMessage}", e)
         Left(e)
     }
+
+  /** Most-recently-updated frequency from any Android device row owned by
+    * uid. Symmetric to the iOS repo's lastFrequencyByUserId — used by
+    * GET /v2/users/me/last-preference when the caller is Android, so a
+    * 2nd-device install inherits the user's last picked frequency.
+    * None when the user has no Android subscriptions yet.
+    */
+  def lastFrequencyByUserId(uid: String): Either[Throwable, Option[Int]] =
+    try
+      Right(
+        sql"""
+          SELECT frequency
+          FROM android_notification_subscriptions
+          WHERE user_id = $uid
+          ORDER BY updated_at DESC
+          LIMIT 1
+        """.query[Int].option.transact(transactor).unsafeRunSync()
+      )
+    catch {
+      case e: Exception =>
+        logger.error(s"Failed to find Android last frequency for uid=$uid: ${e.getMessage}", e)
+        Left(e)
+    }
+
+  /** Delete every Android subscription row linked to uid. The iOS table
+    * has an FK to users(id) ON DELETE CASCADE; this table does not (kept
+    * self-contained on purpose), so account-deletion has to invoke this
+    * explicitly to avoid orphan rows.
+    */
+  def deleteByUserId(uid: String): Either[Throwable, Int] =
+    try
+      Right(
+        sql"DELETE FROM android_notification_subscriptions WHERE user_id = $uid"
+          .update.run.transact(transactor).unsafeRunSync()
+      )
+    catch {
+      case e: Exception =>
+        logger.error(s"Failed to delete Android subscriptions by uid=$uid: ${e.getMessage}", e)
+        Left(e)
+    }
 }

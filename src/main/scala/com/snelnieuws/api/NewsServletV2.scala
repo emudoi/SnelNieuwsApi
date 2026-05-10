@@ -47,10 +47,12 @@ class NewsServletV2(
 
   private val logger = LoggerFactory.getLogger(classOf[NewsServletV2])
 
-  // Only iOS for now. Format: `ios/<version>` — version is kept lax (any
-  // non-empty token) so we don't need to ship a backend update every time
-  // the bundle version bumps.
-  private val ClientHeaderRe = """^ios/[^\s]+$""".r
+  // Accepts iOS and Android. Format: `<platform>/<version>` — version is
+  // kept lax (any non-empty token) so a routine bundle bump does not
+  // require a backend update. Android-specific notification routes live
+  // on a separate servlet; the rest of the v2 surface (news, articles,
+  // users, categories) is platform-agnostic and shared.
+  private val ClientHeaderRe = """^(ios|android)/[^\s]+$""".r
 
   // Routes that bypass the X-Client-Key check. POST /clients/register is
   // the bootstrap — the app calls it on first launch precisely to obtain
@@ -340,9 +342,20 @@ class NewsServletV2(
     }
   }
 
+  /** Platform-aware: the iOS and Android subscription tables are kept
+    * separate, so this route picks the right one off the X-Client header
+    * (already validated by the gate to be `(ios|android)/<v>`). iOS reads
+    * notification_subscriptions; Android reads android_notification_subscriptions.
+    * Categories are NOT platform-specific (they live on the shared users
+    * table) and are handled by the /users/me/categories routes instead.
+    */
   get("/users/me/last-preference") {
     val uid = requireUid()
-    userService.lastFrequency(uid) match {
+    val xClient = Option(request.getHeader("X-Client")).map(_.trim).getOrElse("")
+    val result =
+      if (xClient.startsWith("android/")) userService.lastFrequencyAndroid(uid)
+      else userService.lastFrequency(uid)
+    result match {
       case Right(Some(freq)) => LastPreferenceResponse(freq)
       case Right(None)       => NotFound(Map("error" -> "no preferences set"))
       case Left(e) =>

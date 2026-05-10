@@ -101,6 +101,16 @@ class NewsServletV2Spec
       }
     }
 
+    "accept android/<v> as a valid X-Client (regex relaxed)" in {
+      requireDb()
+      // Falls through to the X-Client-Key check (no key sent → 401, not
+      // the 403 the regex would otherwise emit). Confirms the platform
+      // gate now permits Android in addition to iOS.
+      get("/v2/everything", Map.empty[String, String], Map("X-Client" -> "android/1.4.0")) {
+        status shouldBe 401
+      }
+    }
+
     "return 401 when X-Client present but X-Client-Key missing" in {
       requireDb()
       get("/v2/everything", Map.empty[String, String], Map("X-Client" -> "ios/1.4.0")) {
@@ -462,6 +472,103 @@ class NewsServletV2Spec
       }
       components.notificationSubscriptionRepository
         .findUserIdByDeviceId(deviceId) shouldBe Right(None)
+    }
+
+    "also clean up Android subscriptions linked to the user" in {
+      requireDb()
+      val uid = "uid-bob"
+      // Bob exists.
+      post("/v2/users", """{"email":"bob@example.com"}""", withAuth("bob-token")) {
+        status shouldBe 200
+      }
+      // Seed both an iOS subscription and an Android subscription under bob.
+      post(
+        "/v2/notifications/subscribe",
+        """{"deviceId":"bob-ios-dev","apnsToken":"bob-ios-token","frequency":3}""",
+        withAuth("bob-token")
+      ) {
+        status shouldBe 200
+      }
+      components.androidNotificationSubscriptionRepository.upsert(
+        deviceId  = "bob-and-dev",
+        fcmToken  = "bob-and-token",
+        frequency = 4,
+        userId    = Some(uid)
+      ) shouldBe a[Right[_, _]]
+
+      // Sanity: both rows exist before delete.
+      components.androidNotificationSubscriptionRepository
+        .lastFrequencyByUserId(uid) shouldBe Right(Some(4))
+
+      delete("/v2/users/me", Map.empty[String, String], withAuth("bob-token")) {
+        status shouldBe 204
+      }
+
+      // iOS row gone via FK cascade; Android row gone via the new explicit
+      // cleanup in UserService.delete.
+      components.androidNotificationSubscriptionRepository
+        .lastFrequencyByUserId(uid) shouldBe Right(None)
+    }
+  }
+
+  "GET /v2/users/me/last-preference" should {
+    "route to the iOS table when called with an iOS X-Client" in {
+      requireDb()
+      // alice already exists from the DELETE spec setup; reuse her uid.
+      // Seed alice with an iOS subscription at freq=2 and an Android
+      // subscription at freq=4. last-preference must return 2 for an iOS
+      // X-Client and 4 for an Android X-Client.
+      post("/v2/users", """{"email":"alice@example.com"}""", withAuth("alice-token")) {
+        status shouldBe 200
+      }
+      components.notificationSubscriptionRepository.upsert(
+        deviceId    = "alice-ios-prefdev",
+        apnsToken   = "alice-ios-prefdev-apns",
+        frequency   = 2,
+        environment = "production",
+        userId      = Some("uid-alice")
+      ) shouldBe a[Right[_, _]]
+      components.androidNotificationSubscriptionRepository.upsert(
+        deviceId  = "alice-and-prefdev",
+        fcmToken  = "alice-and-prefdev-fcm",
+        frequency = 4,
+        userId    = Some("uid-alice")
+      ) shouldBe a[Right[_, _]]
+
+      // iOS X-Client → iOS frequency.
+      get("/v2/users/me/last-preference", Map.empty[String, String], withAuth("alice-token")) {
+        status shouldBe 200
+        body should include("\"frequency\":2")
+      }
+    }
+
+    "route to the Android table when called with an Android X-Client" in {
+      requireDb()
+      // Same setup as the previous case (reuses the seeded rows). Switch
+      // the X-Client header to android/* and confirm we now read the
+      // android_notification_subscriptions row.
+      val androidHeaders = Map(
+        "Content-Type"  -> "application/json",
+        "X-Client"      -> "android/1.4.0",
+        "X-Client-Key"  -> gateClientId,
+        "Authorization" -> "Bearer alice-token"
+      )
+      get("/v2/users/me/last-preference", Map.empty[String, String], androidHeaders) {
+        status shouldBe 200
+        body should include("\"frequency\":4")
+      }
+    }
+
+    "return 404 when the platform-specific table has no rows for the user" in {
+      requireDb()
+      // bob has been deleted in the cross-platform DELETE test above.
+      // Re-create bob without any subscriptions.
+      post("/v2/users", """{"email":"bob@example.com"}""", withAuth("bob-token")) {
+        status shouldBe 200
+      }
+      get("/v2/users/me/last-preference", Map.empty[String, String], withAuth("bob-token")) {
+        status shouldBe 404
+      }
     }
   }
 }

@@ -191,7 +191,11 @@ class Components(
     )
 
   lazy val userService: UserService =
-    new UserService(userRepository, notificationSubscriptionRepository)
+    new UserService(
+      userRepository,
+      notificationSubscriptionRepository,
+      androidNotificationSubscriptionRepository
+    )
 
   // Schedulers / consumers
   private val cleanupCfg = rootConfig.getConfig("articles.cleanup")
