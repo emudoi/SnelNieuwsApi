@@ -17,11 +17,11 @@
 <body>
 
 <h1>Privacy Policy — Snel Nieuws</h1>
-<p class="meta">Last updated: 27 April 2026</p>
+<p class="meta">Last updated: 10 May 2026</p>
 
-<p>This Privacy Policy describes how the Snel Nieuws iOS application
-(“Snel Nieuws”, “the app”, “we”, “us”) collects, uses, and protects
-information about you.</p>
+<p>This Privacy Policy describes how the Snel Nieuws application for
+iOS and Android (“Snel Nieuws”, “the app”, “we”, “us”) collects, uses,
+and protects information about you.</p>
 
 <h2>1. Who we are</h2>
 <p>Snel Nieuws is operated by Emudoi. You can reach us at
@@ -31,7 +31,8 @@ information about you.</p>
 <p>We collect only what is needed to operate the app:</p>
 <ul>
   <li><strong>Email address</strong> — when you create an account with email/password,
-      sign in with Google, or sign in with Apple. Required to identify your account.</li>
+      sign in with Google, or (on iOS) sign in with Apple. Required to identify
+      your account.</li>
   <li><strong>Name</strong> — if your Apple or Google sign-in chooses to share it.
       Used only as a display name.</li>
   <li><strong>Account identifier</strong> — a unique user ID assigned by Firebase
@@ -39,6 +40,13 @@ information about you.</p>
   <li><strong>Saved articles</strong> — bookmarks you create within the app.
       Stored on your device. Article identifiers may be associated with your
       account so your bookmarks survive reinstall.</li>
+  <li><strong>Notification preferences and push token</strong> — when you opt in
+      to push notifications, we store the daily-update frequency you pick and
+      the push token your device generates (APNs token on iOS, Firebase Cloud
+      Messaging token on Android), together with a per-install device
+      identifier. Used solely to deliver the news pushes you’ve subscribed to.
+      Cleared from our servers when you turn notifications off, delete the app,
+      or delete your account.</li>
 </ul>
 
 <p>We do <strong>not</strong> collect: your contacts, your location, your photos,
@@ -49,6 +57,8 @@ your health data, your purchases, or your browsing history outside the app.</p>
   <li>To create and authenticate your account.</li>
   <li>To save and restore your bookmarked articles.</li>
   <li>To send password reset emails when you request them.</li>
+  <li>To deliver push notifications at the frequency you’ve chosen, when you
+      have opted in.</li>
   <li>To diagnose crashes and improve reliability of the app.</li>
 </ul>
 
@@ -63,8 +73,15 @@ sharing with data brokers.</p>
       <a href="https://firebase.google.com/support/privacy">Firebase Privacy</a>.</li>
   <li><strong>Cloud Firestore</strong> (Google LLC) — stores your account record so
       it can be retrieved across devices.</li>
-  <li><strong>Sign in with Apple</strong> — when you choose to sign in with Apple.</li>
-  <li><strong>Sign in with Google</strong> — when you choose to sign in with Google.</li>
+  <li><strong>Sign in with Apple</strong> (iOS only) — when you choose to sign in with Apple.</li>
+  <li><strong>Sign in with Google</strong> — when you choose to sign in with Google
+      on either iOS or Android.</li>
+  <li><strong>Apple Push Notification service (APNs)</strong> — delivers push
+      notifications to iOS devices. Used only when you opt in to notifications.</li>
+  <li><strong>Firebase Cloud Messaging (FCM)</strong> (Google LLC) — delivers
+      push notifications to Android devices. Used only when you opt in to
+      notifications. See
+      <a href="https://firebase.google.com/support/privacy">Firebase Privacy</a>.</li>
   <li><strong>Snel Nieuws API</strong> (operated by us at <code>api.snel.emudoi.com</code>) —
       delivers news content. The API does not log your account identifier
       against article requests.</li>
