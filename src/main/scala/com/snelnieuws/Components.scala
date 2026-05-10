@@ -2,6 +2,9 @@ package com.snelnieuws
 
 import cats.effect.IO
 import com.snelnieuws.api.{
+  AndroidNotificationBroadcastServlet,
+  AndroidNotificationDispatchServlet,
+  AndroidNotificationsServletV2,
   HealthServlet,
   ImageServlet,
   NewsServlet,
@@ -14,6 +17,8 @@ import com.snelnieuws.auth.FirebaseTokenVerifier
 import com.snelnieuws.db.Database
 import com.snelnieuws.kafka.SummarizedImportKafkaConfig
 import com.snelnieuws.repository.{
+  AndroidNotificationDispatchRepository,
+  AndroidNotificationSubscriptionRepository,
   AppClientRepository,
   ArticleRepository,
   FeatureFlagRepository,
@@ -23,10 +28,14 @@ import com.snelnieuws.repository.{
   UserRepository
 }
 import com.snelnieuws.service.{
+  AndroidNotificationService,
   ApnsConfig,
   ApnsMessagingService,
   ArticleCleanupScheduler,
   ArticleService,
+  FcmConfig,
+  FcmMessagingService,
+  FirebaseFcmMessagingService,
   ImageCacheCleanupScheduler,
   ImageCacheConfig,
   ImageCacheService,
@@ -47,6 +56,7 @@ class Components(
   rootConfig: Config,
   apns: Option[ApnsMessagingService],
   apnsSandbox: Option[ApnsMessagingService],
+  fcm: Option[FcmMessagingService] = None,
   verifierOverride: Option[FirebaseTokenVerifier] = None
 ) {
 
@@ -59,6 +69,10 @@ class Components(
     new NotificationSubscriptionRepository(provideTransactor)
   lazy val notificationDispatchRepository: NotificationDispatchRepository =
     new NotificationDispatchRepository(provideTransactor)
+  lazy val androidNotificationSubscriptionRepository: AndroidNotificationSubscriptionRepository =
+    new AndroidNotificationSubscriptionRepository(provideTransactor)
+  lazy val androidNotificationDispatchRepository: AndroidNotificationDispatchRepository =
+    new AndroidNotificationDispatchRepository(provideTransactor)
   lazy val userRepository: UserRepository =
     new UserRepository(provideTransactor)
   lazy val appClientRepository: AppClientRepository =
@@ -167,6 +181,15 @@ class Components(
       apnsSandbox = apnsSandbox
     )
 
+  lazy val androidNotificationService: AndroidNotificationService =
+    new AndroidNotificationService(
+      articleRepository,
+      androidNotificationSubscriptionRepository,
+      androidNotificationDispatchRepository,
+      featureFlagRepository,
+      fcm = fcm
+    )
+
   lazy val userService: UserService =
     new UserService(userRepository, notificationSubscriptionRepository)
 
@@ -239,6 +262,16 @@ class Components(
     )
   lazy val notificationBroadcastServlet: NotificationBroadcastServlet =
     new NotificationBroadcastServlet(notificationService, notificationsApiKey)
+  lazy val androidNotificationsServletV2: AndroidNotificationsServletV2 =
+    new AndroidNotificationsServletV2(
+      androidNotificationService,
+      appClientRepository,
+      firebaseVerifier
+    )
+  lazy val androidNotificationDispatchServlet: AndroidNotificationDispatchServlet =
+    new AndroidNotificationDispatchServlet(androidNotificationService, notificationsApiKey)
+  lazy val androidNotificationBroadcastServlet: AndroidNotificationBroadcastServlet =
+    new AndroidNotificationBroadcastServlet(androidNotificationService, notificationsApiKey)
   lazy val staticContentServlet: StaticContentServlet =
     new StaticContentServlet
   lazy val healthServlet: HealthServlet =
@@ -274,12 +307,59 @@ object Components {
   def default(): Components = {
     val cfg = ConfigFactory.load()
     val (apns, apnsSandbox) = buildApnsBoth(cfg)
+    val fcm = buildFcm(cfg)
     new Components(
       provideTransactor = Database.transactor,
       rootConfig = cfg,
       apns = apns,
-      apnsSandbox = apnsSandbox
+      apnsSandbox = apnsSandbox,
+      fcm = fcm
     )
+  }
+
+  // Build the FCM client. Returns None when notifications are disabled,
+  // FCM is opted out (notifications.fcm.enabled=false), or init throws.
+  // The Android dispatch servlet maps `None` to 503 so an Airflow trigger
+  // gets a clear failure rather than a silent no-op.
+  //
+  // Uses `firebase.service-account-path` by default — same JSON the ID-token
+  // verifier loads — but can be overridden by `notifications.fcm.service-account-path`
+  // if you want to scope FCM to a separate SA with only messaging perms.
+  private def buildFcm(cfg: Config): Option[FcmMessagingService] = {
+    val notifCfg = cfg.getConfig("notifications")
+    if (!notifCfg.getBoolean("enabled")) {
+      logger.info("Notifications are disabled (notifications.enabled=false) — FCM not initialized")
+      return None
+    }
+    val fcmCfg = notifCfg.getConfig("fcm")
+    if (!fcmCfg.getBoolean("enabled")) {
+      logger.info("FCM disabled (notifications.fcm.enabled=false)")
+      return None
+    }
+    val firebaseCfg = cfg.getConfig("firebase")
+    val projectId   = firebaseCfg.getString("project-id")
+    if (projectId.isEmpty) {
+      logger.warn("FCM enabled but firebase.project-id is empty — Android dispatch will be a no-op")
+      return None
+    }
+    val saPathOverride = fcmCfg.getString("service-account-path")
+    val saPath =
+      if (saPathOverride.nonEmpty) saPathOverride
+      else firebaseCfg.getString("service-account-path")
+    val dryRun = fcmCfg.getBoolean("dry-run")
+    try {
+      val subRepo = new AndroidNotificationSubscriptionRepository(Database.transactor)
+      val client = new FirebaseFcmMessagingService(
+        subRepo,
+        FcmConfig(projectId = projectId, serviceAccountPath = saPath, dryRun = dryRun)
+      )
+      logger.info(s"FCM client initialized (project=$projectId, dryRun=$dryRun)")
+      Some(client)
+    } catch {
+      case e: Exception =>
+        logger.error(s"Failed to initialize FCM client: ${e.getMessage}", e)
+        None
+    }
   }
 
   // Build both APNs clients from one config block. The sandbox config-level

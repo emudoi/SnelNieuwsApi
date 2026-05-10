@@ -40,6 +40,11 @@ class ScalatraBootstrap extends LifeCycle {
     // Broadcast endpoint — fans out a free-form text to either or both
     // environments based on feature_flags.is_enabled. Same X-API-Key auth.
     context.mount(components.notificationBroadcastServlet, "/notifications/broadcast")
+    // Android dispatch + broadcast — fully parallel surface, X-API-Key
+    // auth (same shared secret as the iOS endpoints). FCM has no
+    // sandbox/production split so there is only one dispatch endpoint.
+    context.mount(components.androidNotificationDispatchServlet, "/android/notifications/dispatch")
+    context.mount(components.androidNotificationBroadcastServlet, "/android/notifications/broadcast")
     context.mount(components.staticContentServlet, "/privacy")
     context.mount(components.staticContentServlet, "/support")
     // /v2/images/* is mounted as its own open servlet (no X-Client /
@@ -47,6 +52,11 @@ class ScalatraBootstrap extends LifeCycle {
     // header-free. The Servlet API picks the longest matching prefix,
     // so this wins over /v2/* below regardless of declaration order.
     context.mount(components.imageServlet, "/v2/images/*")
+    // Android-specific v2 surface (subscribe + delete + register). Mounted
+    // BEFORE /v2/* in spirit — the Servlet API resolves by longest prefix
+    // anyway, so /v2/android/* always wins over /v2/*. Independent
+    // before-filter that requires `X-Client: android/<v>`.
+    context.mount(components.androidNotificationsServletV2, "/v2/android/*")
     context.mount(components.newsServletV2, "/v2/*")
     // v1 catch-all stays mounted last, conceptually — kept here for
     // readability of the routing table.
