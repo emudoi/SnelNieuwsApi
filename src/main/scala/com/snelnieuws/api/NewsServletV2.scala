@@ -218,6 +218,16 @@ class NewsServletV2(
     Map("minVersion" -> "1.2.0")
   }
 
+  // Android force-upgrade gate. Compared as Int against BuildConfig.VERSION_CODE
+  // in the app, so any client with versionCode < minVersionCode is shown the
+  // force-update screen. minVersionName is informational only (shown in UI / logs).
+  get("/app/config/android") {
+    Map(
+      "minVersionCode" -> 140,
+      "minVersionName" -> "1.4.0"
+    )
+  }
+
   // ─────────────────────────── Client registry ───────────────────────────
 
   /** Bootstrap route. iOS calls on first launch with the UUID it generated

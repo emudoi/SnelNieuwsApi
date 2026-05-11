@@ -299,6 +299,16 @@ class NewsServletV2Spec
     }
   }
 
+  "GET /v2/app/config/android" should {
+    "return minVersionCode and minVersionName" in {
+      get("/v2/app/config/android", Map.empty[String, String], gatedHeaders) {
+        status shouldBe 200
+        body should include("minVersionCode")
+        body should include("minVersionName")
+      }
+    }
+  }
+
   // ─────────────────────────── Subscribe + delete ────────────────────────
 
   "POST /v2/notifications/subscribe" should {
