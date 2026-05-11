@@ -47,6 +47,7 @@ class ScalatraBootstrap extends LifeCycle {
     context.mount(components.androidNotificationBroadcastServlet, "/android/notifications/broadcast")
     context.mount(components.staticContentServlet, "/privacy")
     context.mount(components.staticContentServlet, "/support")
+    context.mount(components.staticContentServlet, "/account-deletion")
     // /v2/images/* is mounted as its own open servlet (no X-Client /
     // X-Client-Key gate) so iOS's plain AsyncImage(url: ...) works
     // header-free. The Servlet API picks the longest matching prefix,

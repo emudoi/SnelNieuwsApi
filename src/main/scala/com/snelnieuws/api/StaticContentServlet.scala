@@ -23,11 +23,17 @@ class StaticContentServlet extends ScalatraServlet {
   // mounted at — `getServletPath` returns the mount, e.g. "/privacy".
   get("/") {
     val mount = Option(request.getServletPath).getOrElse("")
-    PathToResource.get(mount) match {
-      case Some(resourcePath) => serveStatic(resourcePath)
-      case None =>
-        logger.warn(s"StaticContentServlet hit at unexpected mount: $mount")
-        NotFound(Map("error" -> "not found"))
+    mount match {
+      case "/account-deletion" =>
+        contentType = "text/plain; charset=utf-8"
+        "ok"
+      case _ =>
+        PathToResource.get(mount) match {
+          case Some(resourcePath) => serveStatic(resourcePath)
+          case None =>
+            logger.warn(s"StaticContentServlet hit at unexpected mount: $mount")
+            NotFound(Map("error" -> "not found"))
+        }
     }
   }
 
