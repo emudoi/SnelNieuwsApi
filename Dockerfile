@@ -1,9 +1,10 @@
 # =============================================================================
 # emudoi-snelnieuws-api — runtime image
 # =============================================================================
-# Slim, single-stage. The fat JAR is built outside (Jenkinsfile `Build` stage,
-# in an sbt agent container) and copied in here. Keeping sbt + apt-get out of
-# the image build means kaniko doesn't depend on Ubuntu mirror availability.
+# Slim, single-stage. The fat JAR is built outside (Argo Workflows
+# `discover-and-build-*` job, in an sbt agent container) and copied in
+# here. Keeping sbt + apt-get out of the image build means kaniko doesn't
+# depend on Ubuntu mirror availability.
 # =============================================================================
 
 FROM eclipse-temurin:17-jre
