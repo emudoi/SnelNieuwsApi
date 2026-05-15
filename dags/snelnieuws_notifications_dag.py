@@ -80,12 +80,10 @@ VAR_LAST_SEEN_RUN_ID   = "snelnieuws_last_seen_summarize_run_id"
 VAR_COUNTER_PREFIX     = "snelnieuws_auto_trigger_count_"  # + YYYY_MM_DD
 
 
-def _post_dispatch(endpoint: str, frequency: str) -> dict:
+def _post_dispatch(endpoint: str) -> dict:
     api_key = Variable.get("snelnieuws_notifications_api_key")
-    params = {"frequency": int(frequency)} if frequency else {}
     r = requests.post(
         endpoint,
-        params=params,
         headers={"X-API-Key": api_key},
         timeout=DISPATCH_TIMEOUT_S,
     )
@@ -120,26 +118,16 @@ def _post_broadcast(endpoint: str, text: str) -> dict:
     start_date=pendulum.datetime(2026, 5, 1, tz="Europe/Amsterdam"),
     catchup=False,
     max_active_runs=1,
-    params={
-        "frequency": Param(
-            default="",
-            type=["string"],
-            enum=["", "1", "2", "3", "4"],
-            description="Frequency tier (1-4) or empty to dispatch every tier.",
-        ),
-    },
     tags=["snelnieuws", "notifications"],
 )
 def snelnieuws_notifications_prod():
     @task
-    def dispatch_ios(**context) -> dict:
-        freq = (context["params"].get("frequency") or "").strip()
-        return _post_dispatch(PROD_ENDPOINT_IOS, freq)
+    def dispatch_ios() -> dict:
+        return _post_dispatch(PROD_ENDPOINT_IOS)
 
     @task(trigger_rule="all_done")
-    def dispatch_android(**context) -> dict:
-        freq = (context["params"].get("frequency") or "").strip()
-        return _post_dispatch(DISPATCH_ENDPOINT_ANDROID, freq)
+    def dispatch_android() -> dict:
+        return _post_dispatch(DISPATCH_ENDPOINT_ANDROID)
 
     dispatch_ios()
     dispatch_android()
@@ -155,21 +143,12 @@ def snelnieuws_notifications_prod():
     start_date=pendulum.datetime(2026, 5, 1, tz="Europe/Amsterdam"),
     catchup=False,
     max_active_runs=1,
-    params={
-        "frequency": Param(
-            default="",
-            type=["string"],
-            enum=["", "1", "2", "3", "4"],
-            description="Frequency tier (1-4) or empty to dispatch every tier.",
-        ),
-    },
     tags=["snelnieuws", "notifications"],
 )
 def snelnieuws_notifications_sandbox():
     @task
-    def dispatch(**context) -> dict:
-        freq = (context["params"].get("frequency") or "").strip()
-        return _post_dispatch(SANDBOX_ENDPOINT_IOS, freq)
+    def dispatch() -> dict:
+        return _post_dispatch(SANDBOX_ENDPOINT_IOS)
 
     dispatch()
 
