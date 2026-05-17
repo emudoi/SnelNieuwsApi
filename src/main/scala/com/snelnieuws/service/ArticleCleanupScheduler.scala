@@ -9,10 +9,13 @@ import java.util.concurrent.atomic.AtomicBoolean
 
 object ArticleCleanupScheduler {
   /** Floor on the table size — cleanup is skipped while the count is below
-    * this. Guards against the table being drained to zero when ingestion
-    * stops (the producer side has been disabled before; combined with
-    * cleanup it emptied the table and the iOS feed went blank). */
-  val MinArticleCount: Int = 20
+    * this. Sized to keep the personalised-feed filter (see
+    * docs/personalised-feed-plan.md) with at least 400 candidates available
+    * even if ingestion stalls. The earlier 20-article floor was set when the
+    * feed was unfiltered and 20 was enough to render *something*; with
+    * per-client filtering we need a wider pool so heavy users do not exhaust
+    * their fresh set immediately. */
+  val MinArticleCount: Int = 400
 }
 
 /**
