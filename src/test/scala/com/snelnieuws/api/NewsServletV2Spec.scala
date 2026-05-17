@@ -581,4 +581,227 @@ class NewsServletV2Spec
       }
     }
   }
+
+  // ─────────────────────── Personalised feed (Phase 5) ───────────────────
+  //
+  // These tests rely on the personalised_feed_enabled feature flag. The
+  // helpers register a fresh client per test so they're insensitive to
+  // any served-id history left by suite-level state.
+
+  private val PersonalisedFlag = "personalised_feed_enabled"
+
+  private def freshClient(): String = {
+    val id = UUID.randomUUID().toString
+    val regBody = s"""{
+      "clientId":  "$id",
+      "bundleId":  "com.emudoi.snelnieuws",
+      "osVersion": "iOS 18.0"
+    }"""
+    post(
+      "/v2/clients/register",
+      regBody,
+      Map("Content-Type" -> "application/json", "X-Client" -> "ios/1.4.0")
+    ) {
+      assert(status == 200, s"register failed: HTTP $status, body=$body")
+    }
+    id
+  }
+
+  private def headersFor(cid: String): Map[String, String] = Map(
+    "Content-Type"  -> "application/json",
+    "X-Client"      -> "ios/1.4.0",
+    "X-Client-Key"  -> cid
+  )
+
+  private def idsOf(responseBody: String): List[String] = {
+    val parsed = org.json4s.jackson.parseJson(responseBody)
+    (parsed \ "articles").children.map(a => (a \ "id").extract[String])
+  }
+
+  private def seedArticles(n: Int, category: String, tag: String): Unit = {
+    (1 to n).foreach { i =>
+      components.articleService.create(com.snelnieuws.model.ArticleCreate(
+        author      = Some(tag),
+        title       = s"$tag-$category-$i-${UUID.randomUUID()}",
+        description = None,
+        url         = s"https://example.com/$tag/$category/$i",
+        urlToImage  = None,
+        content     = None,
+        category    = Some(category)
+      )) shouldBe a[Right[_, _]]
+    }
+  }
+
+  "Personalised feed — flag off (regression guard)" should {
+    "return byte-identical id sets across two consecutive calls" in {
+      requireDb()
+      components.featureFlagRepository.setEnabled(PersonalisedFlag, enabled = false)
+      val cid = freshClient()
+      val tag = s"pf-flag-off-${UUID.randomUUID().toString.take(8)}"
+      seedArticles(20, "technology", tag)
+
+      val firstIds  = get("/v2/everything", Map.empty, headersFor(cid)) {
+        status shouldBe 200
+        idsOf(body)
+      }
+      val secondIds = get("/v2/everything", Map.empty, headersFor(cid)) {
+        status shouldBe 200
+        idsOf(body)
+      }
+      // Order can differ because interleaveBySource shuffles by source, but
+      // the *set* of returned ids must match exactly when the filter is off.
+      firstIds.toSet shouldBe secondIds.toSet
+    }
+  }
+
+  "Personalised feed — flag on" should {
+    "rotate /v2/everything across two calls" in {
+      requireDb()
+      components.featureFlagRepository.setEnabled(PersonalisedFlag, enabled = true)
+      val cid = freshClient()
+      val tag = s"pf-everything-${UUID.randomUUID().toString.take(8)}"
+      seedArticles(250, "technology", tag)
+
+      val first  = get("/v2/everything", Map.empty, headersFor(cid)) { idsOf(body) }
+      val second = get("/v2/everything", Map.empty, headersFor(cid)) { idsOf(body) }
+      first.toSet.intersect(second.toSet) shouldBe empty
+      // Reset flag so unrelated tests aren't surprised.
+      components.featureFlagRepository.setEnabled(PersonalisedFlag, enabled = false)
+    }
+
+    "rotate /v2/feed across two calls" in {
+      requireDb()
+      components.featureFlagRepository.setEnabled(PersonalisedFlag, enabled = true)
+      val cid = freshClient()
+      val tag = s"pf-feed-${UUID.randomUUID().toString.take(8)}"
+      seedArticles(150, "politics", tag)
+      seedArticles(150, "economy",  tag)
+
+      val first  = get("/v2/feed", Map("categories" -> "politics,economy"), headersFor(cid)) { idsOf(body) }
+      val second = get("/v2/feed", Map("categories" -> "politics,economy"), headersFor(cid)) { idsOf(body) }
+      first.toSet.intersect(second.toSet) shouldBe empty
+      components.featureFlagRepository.setEnabled(PersonalisedFlag, enabled = false)
+    }
+
+    "rotate /v2/top-headlines across two calls" in {
+      requireDb()
+      components.featureFlagRepository.setEnabled(PersonalisedFlag, enabled = true)
+      val cid = freshClient()
+      val tag = s"pf-top-${UUID.randomUUID().toString.take(8)}"
+      seedArticles(250, "sports", tag)
+
+      val first  = get("/v2/top-headlines", Map("category" -> "sports"), headersFor(cid)) { idsOf(body) }
+      val second = get("/v2/top-headlines", Map("category" -> "sports"), headersFor(cid)) { idsOf(body) }
+      first.toSet.intersect(second.toSet) shouldBe empty
+      components.featureFlagRepository.setEnabled(PersonalisedFlag, enabled = false)
+    }
+
+    "bypass personalisation for free-text search q=trump" in {
+      requireDb()
+      components.featureFlagRepository.setEnabled(PersonalisedFlag, enabled = true)
+      val cid = freshClient()
+      val tag = s"pf-search-${UUID.randomUUID().toString.take(8)}"
+      // Seed articles whose title contains 'trump' so the search hits.
+      (1 to 5).foreach { i =>
+        components.articleService.create(com.snelnieuws.model.ArticleCreate(
+          author = Some(tag),
+          title  = s"$tag-trump-piece-$i-${UUID.randomUUID()}",
+          description = None,
+          url = s"https://example.com/$tag/search/$i",
+          urlToImage = None, content = None, category = Some("politics")
+        )) shouldBe a[Right[_, _]]
+      }
+      // q=trump is not in Categories.all → servlet routes to bypass.
+      val first  = get("/v2/everything", Map("q" -> "trump"), headersFor(cid)) { idsOf(body).toSet }
+      val second = get("/v2/everything", Map("q" -> "trump"), headersFor(cid)) { idsOf(body).toSet }
+      first shouldBe second
+      components.featureFlagRepository.setEnabled(PersonalisedFlag, enabled = false)
+    }
+
+    "personalise q=politics (a canonical category name)" in {
+      requireDb()
+      components.featureFlagRepository.setEnabled(PersonalisedFlag, enabled = true)
+      val cid = freshClient()
+      val tag = s"pf-cat-q-${UUID.randomUUID().toString.take(8)}"
+      seedArticles(150, "politics", tag)
+      val first  = get("/v2/everything", Map("q" -> "politics"), headersFor(cid)) { idsOf(body).toSet }
+      val second = get("/v2/everything", Map("q" -> "politics"), headersFor(cid)) { idsOf(body).toSet }
+      first.intersect(second) shouldBe empty
+      components.featureFlagRepository.setEnabled(PersonalisedFlag, enabled = false)
+    }
+
+    "isolate served history across two clients" in {
+      requireDb()
+      components.featureFlagRepository.setEnabled(PersonalisedFlag, enabled = true)
+      val cidA = freshClient()
+      val cidB = freshClient()
+      val tag = s"pf-iso-${UUID.randomUUID().toString.take(8)}"
+      seedArticles(250, "technology", tag)
+
+      val a1 = get("/v2/everything", Map.empty, headersFor(cidA)) { idsOf(body).toSet }
+      val b1 = get("/v2/everything", Map.empty, headersFor(cidB)) { idsOf(body).toSet }
+      // First calls draw from the same top-N pool, so the *sets* match.
+      a1 shouldBe b1
+
+      val a2 = get("/v2/everything", Map.empty, headersFor(cidA)) { idsOf(body).toSet }
+      val b2 = get("/v2/everything", Map.empty, headersFor(cidB)) { idsOf(body).toSet }
+      a2.intersect(a1) shouldBe empty
+      b2.intersect(b1) shouldBe empty
+      components.featureFlagRepository.setEnabled(PersonalisedFlag, enabled = false)
+    }
+
+    "cycle through reset when the pool is small (no empty responses)" in {
+      requireDb()
+      components.featureFlagRepository.setEnabled(PersonalisedFlag, enabled = true)
+      val cid = freshClient()
+      val tag = s"pf-reset-${UUID.randomUUID().toString.take(8)}"
+      // The DB already has rows from other tests, so we can't make the
+      // *pool* small. Instead drive the same client through three
+      // consecutive calls and assert none are empty.
+      seedArticles(50, "culture", tag)
+      val n1 = get("/v2/everything", Map.empty, headersFor(cid)) { idsOf(body).size }
+      val n2 = get("/v2/everything", Map.empty, headersFor(cid)) { idsOf(body).size }
+      val n3 = get("/v2/everything", Map.empty, headersFor(cid)) { idsOf(body).size }
+      // Each call returned *something*. The reset path activates if a
+      // client exhausts the pool; in all cases the response has > 0
+      // articles since the DB has > 0 articles.
+      List(n1, n2, n3).foreach(_ should be > 0)
+      components.featureFlagRepository.setEnabled(PersonalisedFlag, enabled = false)
+    }
+
+    "still enforce the gate (401 without X-Client-Key when flag on)" in {
+      requireDb()
+      components.featureFlagRepository.setEnabled(PersonalisedFlag, enabled = true)
+      get("/v2/everything", Map.empty, Map("X-Client" -> "ios/1.4.0")) {
+        status shouldBe 401
+      }
+      components.featureFlagRepository.setEnabled(PersonalisedFlag, enabled = false)
+    }
+
+    "bump last_seen_at on the request even when filter is active (regression)" in {
+      requireDb()
+      components.featureFlagRepository.setEnabled(PersonalisedFlag, enabled = true)
+      val cid = freshClient()
+      val cidUuid = UUID.fromString(cid)
+      val tag = s"pf-markseen-${UUID.randomUUID().toString.take(8)}"
+      seedArticles(20, "world", tag)
+
+      import doobie.implicits._
+      import doobie.postgres.implicits._
+      import cats.effect.unsafe.implicits.global
+      import java.time.OffsetDateTime
+      // Force last_seen_at into the past so we can detect a bump.
+      sql"UPDATE app_clients SET last_seen_at = NOW() - INTERVAL '1 hour' WHERE client_id = $cidUuid"
+        .update.run.transact(com.snelnieuws.db.Database.transactor).unsafeRunSync()
+
+      get("/v2/everything", Map.empty, headersFor(cid)) { status shouldBe 200 }
+
+      val seenAfter: OffsetDateTime = sql"SELECT last_seen_at FROM app_clients WHERE client_id = $cidUuid"
+        .query[OffsetDateTime].unique.transact(com.snelnieuws.db.Database.transactor).unsafeRunSync()
+      // Bumped to "now" — must be within the last few seconds.
+      val secondsAgo = java.time.Duration.between(seenAfter, OffsetDateTime.now()).getSeconds
+      secondsAgo should be < 60L
+      components.featureFlagRepository.setEnabled(PersonalisedFlag, enabled = false)
+    }
+  }
 }

@@ -108,7 +108,15 @@ class NewsServletV2(
   get("/everything") {
     val query = params.getOrElse("q", "")
     val limit = params.getOrElse("pageSize", "100").toInt
-    articleService.findEverything(query, limit) match {
+    // Pass clientId only when the route is firehose or a known category.
+    // Free-text search bypasses personalisation: hiding "seen" matches from
+    // an intent-driven query would confuse users (see plan, Phase 4.1).
+    val isCategoryLookup =
+      query.isEmpty ||
+      query == "news" ||
+      Categories.all.contains(query.toLowerCase)
+    val cidForCall = if (isCategoryLookup) clientIdFromHeader else None
+    articleService.findEverything(query, limit, cidForCall) match {
       case Right(articles) =>
         NewsFetchResponse(status = "ok", totalResults = articles.length, articles = articles)
       case Left(e) =>
@@ -143,7 +151,7 @@ class NewsServletV2(
       ))
     } else {
       val limit = params.getOrElse("pageSize", "100").toInt
-      articleService.findByCategories(parsed, limit) match {
+      articleService.findByCategories(parsed, limit, clientIdFromHeader) match {
         case Right(articles) =>
           NewsFetchResponse(status = "ok", totalResults = articles.length, articles = articles)
         case Left(e) =>
@@ -155,7 +163,7 @@ class NewsServletV2(
   get("/top-headlines") {
     val category = params.getOrElse("category", "")
     val limit    = params.getOrElse("pageSize", "100").toInt
-    articleService.findTopHeadlines(category, limit) match {
+    articleService.findTopHeadlines(category, limit, clientIdFromHeader) match {
       case Right(articles) =>
         NewsFetchResponse(status = "ok", totalResults = articles.length, articles = articles)
       case Left(e) =>
