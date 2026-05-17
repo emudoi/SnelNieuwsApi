@@ -77,6 +77,68 @@ class ArticleRepository(provideTransactor: => HikariTransactor[IO]) {
         Left(e)
     }
 
+  // ────────────────────── Personalised-feed pool reads ──────────────────────
+  //
+  // Same projection and ordering as findAll / findByCategory /
+  // findByCategories, just a wider default LIMIT so the post-filter result
+  // still has ~100 articles available after excluding the client's seen
+  // history. See ArticleService.personalisedFetch and
+  // docs/personalised-feed-plan.md.
+
+  def findAllPool(limit: Int = 300): Either[Throwable, List[ArticleRow]] =
+    try
+      Right(
+        sql"""
+          SELECT id, author, title, description, url, url_to_image,
+                 to_char(published_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"'), content, category
+          FROM articles
+          ORDER BY published_at DESC
+          LIMIT $limit
+        """.query[ArticleRow].to[List].transact(transactor).unsafeRunSync()
+      )
+    catch {
+      case e: Exception =>
+        logger.error(s"Failed to load article pool: ${e.getMessage}", e)
+        Left(e)
+    }
+
+  def findByCategoryPool(category: String, limit: Int = 300): Either[Throwable, List[ArticleRow]] =
+    try
+      Right(
+        sql"""
+          SELECT id, author, title, description, url, url_to_image,
+                 to_char(published_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"'), content, category
+          FROM articles
+          WHERE LOWER(category) = LOWER($category)
+          ORDER BY published_at DESC
+          LIMIT $limit
+        """.query[ArticleRow].to[List].transact(transactor).unsafeRunSync()
+      )
+    catch {
+      case e: Exception =>
+        logger.error(s"Failed to load article pool by category=$category: ${e.getMessage}", e)
+        Left(e)
+    }
+
+  def findByCategoriesPool(categories: List[String], limit: Int = 300): Either[Throwable, List[ArticleRow]] =
+    try {
+      val lowercased = categories.map(_.toLowerCase)
+      Right(
+        sql"""
+          SELECT id, author, title, description, url, url_to_image,
+                 to_char(published_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"'), content, category
+          FROM articles
+          WHERE LOWER(category) = ANY($lowercased)
+          ORDER BY published_at DESC
+          LIMIT $limit
+        """.query[ArticleRow].to[List].transact(transactor).unsafeRunSync()
+      )
+    } catch {
+      case e: Exception =>
+        logger.error(s"Failed to load article pool by categories=${categories.mkString(",")}: ${e.getMessage}", e)
+        Left(e)
+    }
+
   def search(query: String, limit: Int = 100): Either[Throwable, List[ArticleRow]] =
     try {
       val searchPattern = s"%${query.toLowerCase}%"
