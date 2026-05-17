@@ -165,10 +165,12 @@ class Components(
 
   lazy val articleService: ArticleService =
     new ArticleService(
-      repository          = articleRepository,
-      imageCacheService   = imageCacheService,
-      imageDownloadWorker = imageDownloadWorker,
-      publicBaseUrl       = imagesPublicBaseUrl
+      repository            = articleRepository,
+      appClientRepository   = appClientRepository,
+      featureFlagRepository = featureFlagRepository,
+      imageCacheService     = imageCacheService,
+      imageDownloadWorker   = imageDownloadWorker,
+      publicBaseUrl         = imagesPublicBaseUrl
     )
 
   lazy val notificationService: NotificationService =

@@ -1,7 +1,7 @@
 package com.snelnieuws.service
 
 import com.snelnieuws.model.{ArticleCreate, ArticleRow}
-import com.snelnieuws.repository.{ArticleRepository, ImageCacheRepository}
+import com.snelnieuws.repository.{AppClientRepository, ArticleRepository, FeatureFlagRepository, ImageCacheRepository}
 import org.scalatest.matchers.should.Matchers
 import org.scalatest.wordspec.AnyWordSpec
 
@@ -75,6 +75,15 @@ class ArticleServiceSpec extends AnyWordSpec with Matchers {
   private def newImageCacheService(): ImageCacheService =
     new ImageCacheService(explodingImageRepo(), HttpClient.newHttpClient(), baseImageConfig)
 
+  // Stubs for the personalised-feed dependencies. The legacy code paths
+  // exercised by this suite never reach the flag check (they go directly
+  // through findById / create), so the bodies are unreachable. Using
+  // throwing stubs documents that and would surface any accidental call.
+  private def explodingAppClientRepo(): AppClientRepository =
+    new AppClientRepository({ throw new AssertionError("app-client repo must not be used") })
+  private def explodingFlagRepo(): FeatureFlagRepository =
+    new FeatureFlagRepository({ throw new AssertionError("feature-flag repo must not be used") })
+
   // ─────────────────────────── create() ─────────────────────────────────
 
   "ArticleService.create" should {
@@ -82,7 +91,14 @@ class ArticleServiceSpec extends AnyWordSpec with Matchers {
       val articleRepo = new RecordingArticleRepository()
       val imgSvc      = newImageCacheService()
       val worker      = new RecordingWorker()
-      val service     = new ArticleService(articleRepo, imgSvc, worker, publicBaseUrl = "https://api.test")
+      val service     = new ArticleService(
+        articleRepo,
+        explodingAppClientRepo(),
+        explodingFlagRepo(),
+        imgSvc,
+        worker,
+        publicBaseUrl = "https://api.test"
+      )
 
       val srcUrl = "https://cdn.example.com/photo.jpg"
       val req = ArticleCreate(
@@ -114,7 +130,14 @@ class ArticleServiceSpec extends AnyWordSpec with Matchers {
       val articleRepo = new RecordingArticleRepository()
       val imgSvc      = newImageCacheService()
       val worker      = new RecordingWorker()
-      val service     = new ArticleService(articleRepo, imgSvc, worker, publicBaseUrl = "https://api.test")
+      val service     = new ArticleService(
+        articleRepo,
+        explodingAppClientRepo(),
+        explodingFlagRepo(),
+        imgSvc,
+        worker,
+        publicBaseUrl = "https://api.test"
+      )
 
       val req = ArticleCreate(
         author = None, title = "T2", description = None,
@@ -134,7 +157,14 @@ class ArticleServiceSpec extends AnyWordSpec with Matchers {
       val articleRepo = new RecordingArticleRepository()
       val imgSvc      = newImageCacheService()
       val worker      = new RecordingWorker()
-      val service     = new ArticleService(articleRepo, imgSvc, worker, publicBaseUrl = "")
+      val service     = new ArticleService(
+        articleRepo,
+        explodingAppClientRepo(),
+        explodingFlagRepo(),
+        imgSvc,
+        worker,
+        publicBaseUrl = ""
+      )
 
       val existing = "/v2/images/aa/bb/deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef.jpg"
       val req = ArticleCreate(
@@ -165,6 +195,8 @@ class ArticleServiceSpec extends AnyWordSpec with Matchers {
       }
       val service = new ArticleService(
         articleRepo,
+        explodingAppClientRepo(),
+        explodingFlagRepo(),
         newImageCacheService(),
         new RecordingWorker(),
         publicBaseUrl = "https://api.test"
@@ -187,6 +219,8 @@ class ArticleServiceSpec extends AnyWordSpec with Matchers {
       }
       val service = new ArticleService(
         articleRepo,
+        explodingAppClientRepo(),
+        explodingFlagRepo(),
         newImageCacheService(),
         new RecordingWorker(),
         publicBaseUrl = "https://api.test"
@@ -208,6 +242,8 @@ class ArticleServiceSpec extends AnyWordSpec with Matchers {
       }
       val service = new ArticleService(
         articleRepo,
+        explodingAppClientRepo(),
+        explodingFlagRepo(),
         newImageCacheService(),
         new RecordingWorker(),
         publicBaseUrl = "https://api.test"

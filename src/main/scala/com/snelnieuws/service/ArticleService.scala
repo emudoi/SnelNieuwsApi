@@ -1,8 +1,11 @@
 package com.snelnieuws.service
 
-import com.snelnieuws.repository.ArticleRepository
+import com.snelnieuws.repository.{AppClientRepository, ArticleRepository, FeatureFlagRepository}
 import com.snelnieuws.model.{Article, ArticleCreate, ArticleRow}
+import org.slf4j.LoggerFactory
 
+import java.security.MessageDigest
+import java.util.UUID
 import scala.collection.mutable
 import scala.util.Random
 
@@ -21,15 +24,25 @@ import scala.util.Random
   *     async download, and the row stores the local path forever. Empty
   *     URLs go straight to the fallback path so iOS always has a working
   *     image to render.
+  *
+  * The optional `appClientRepository` and `featureFlagRepository` power
+  * the personalised-feed filter. When the `personalised_feed_enabled`
+  * flag is on and the caller supplies a `clientId`, read paths pull a
+  * wider pool, filter by the client's served-id history, and append the
+  * newly-served ids. See docs/personalised-feed-plan.md.
   */
 class ArticleService(
   repository: ArticleRepository,
+  appClientRepository: AppClientRepository,
+  featureFlagRepository: FeatureFlagRepository,
   imageCacheService: ImageCacheService,
   imageDownloadWorker: ImageDownloadWorker,
   publicBaseUrl: String
 ) {
 
   import ArticleService._
+
+  private val logger = LoggerFactory.getLogger(classOf[ArticleService])
 
   def findAll(limit: Int = 100): Either[Throwable, List[Article]] =
     repository.findAll(limit).map(_.map(toArticle)).map(interleaveBySource)
@@ -78,6 +91,103 @@ class ArticleService(
     if (category.isEmpty) findAll(limit)
     else findByCategory(category, limit)
 
+  // ─────────────────────── Personalised-feed overloads ──────────────────────
+  //
+  // Behaviour matrix:
+  //   flag off OR clientId.isEmpty → identical to the legacy overload.
+  //   flag on AND clientId.isDefined → wider-pool read, filter by served-id
+  //     history, append the freshly-served ids. On exhaustion (filter yields
+  //     0 articles), clear the history and serve the top `limit` unfiltered.
+
+  def findAll(limit: Int, clientId: Option[UUID]): Either[Throwable, List[Article]] =
+    personalisedOrLegacy(
+      clientId,
+      limit,
+      legacy = () => findAll(limit),
+      pool   = () => repository.findAllPool()
+    )
+
+  def findByCategory(category: String, limit: Int, clientId: Option[UUID]): Either[Throwable, List[Article]] =
+    personalisedOrLegacy(
+      clientId,
+      limit,
+      legacy = () => findByCategory(category, limit),
+      pool   = () => repository.findByCategoryPool(category)
+    )
+
+  def findByCategories(categories: List[String], limit: Int, clientId: Option[UUID]): Either[Throwable, List[Article]] =
+    personalisedOrLegacy(
+      clientId,
+      limit,
+      legacy = () => findByCategories(categories, limit),
+      pool   = () => repository.findByCategoriesPool(categories)
+    )
+
+  def findEverything(query: String, limit: Int, clientId: Option[UUID]): Either[Throwable, List[Article]] =
+    if (query.isEmpty || query == "news") {
+      findAll(limit, clientId)
+    } else {
+      // Try the category overload first (personalised when applicable);
+      // fall back to the legacy free-text search if no category match.
+      // Search bypasses personalisation entirely — callers (NewsServletV2)
+      // are expected to short-circuit non-category q values to None before
+      // calling this, but the inner search() call here keeps the same
+      // bypass semantics regardless.
+      findByCategory(query, limit, clientId).flatMap { byCategory =>
+        if (byCategory.nonEmpty) Right(byCategory)
+        else search(query, limit)
+      }
+    }
+
+  def findTopHeadlines(category: String, limit: Int, clientId: Option[UUID]): Either[Throwable, List[Article]] =
+    if (category.isEmpty) findAll(limit, clientId)
+    else findByCategory(category, limit, clientId)
+
+  private def personalisedOrLegacy(
+    clientId: Option[UUID],
+    limit: Int,
+    legacy: () => Either[Throwable, List[Article]],
+    pool: () => Either[Throwable, List[ArticleRow]]
+  ): Either[Throwable, List[Article]] = {
+    val flagOn = featureFlagRepository.isEnabled(PersonalisedFeedFlag).getOrElse(false)
+    (flagOn, clientId) match {
+      case (true, Some(cid)) => personalisedFetch(cid, limit, pool)
+      case _                 => legacy()
+    }
+  }
+
+  private def personalisedFetch(
+    clientId: UUID,
+    limit: Int,
+    pool: () => Either[Throwable, List[ArticleRow]]
+  ): Either[Throwable, List[Article]] =
+    for {
+      rows   <- pool()
+      served <- appClientRepository.readServedIds(clientId)
+      result <- {
+        val fresh = rows.filterNot(r => served.contains(r.id)).take(limit)
+        if (fresh.nonEmpty) {
+          logger.info(
+            s"personalised_fetch client=${hashClient(clientId)} pool=${rows.length} " +
+              s"served=${served.size} fresh=${fresh.size} reset=false"
+          )
+          appClientRepository.appendServedIds(clientId, fresh.map(_.id))
+            .map(_ => fresh)
+        } else {
+          // Exhaust path: reset history and serve the top `limit` unfiltered.
+          // setServedIds replaces wholesale so the next call starts a fresh
+          // rotation cycle.
+          val reset = rows.take(limit)
+          logger.info(
+            s"personalised_fetch client=${hashClient(clientId)} pool=${rows.length} " +
+              s"served=${served.size} fresh=0 reset=true"
+          )
+          appClientRepository.setServedIds(clientId, reset.map(_.id))
+            .map(_ => reset)
+        }
+      }
+    } yield interleaveBySource(result.map(toArticle))
+
   private def toArticle(row: ArticleRow): Article = Article(
     id          = row.id.toString,
     author      = row.author,
@@ -120,6 +230,16 @@ class ArticleService(
 }
 
 object ArticleService {
+
+  private val PersonalisedFeedFlag = "personalised_feed_enabled"
+
+  /** SHA-256 prefix of the install UUID, used only in log lines so production
+    * logs don't contain raw install IDs. 4 bytes (8 hex chars) is enough to
+    * disambiguate clients while keeping the log compact. */
+  private def hashClient(clientId: UUID): String = {
+    val bytes = MessageDigest.getInstance("SHA-256").digest(clientId.toString.getBytes("UTF-8"))
+    bytes.take(4).map("%02x".format(_)).mkString
+  }
 
   /** Internal write-path decision: what to persist on the row, and whether
     * to enqueue the original source URL for the async download. */
