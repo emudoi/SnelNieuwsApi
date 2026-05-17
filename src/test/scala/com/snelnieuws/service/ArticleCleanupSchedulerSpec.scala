@@ -93,5 +93,33 @@ class ArticleCleanupSchedulerSpec
         case Left(e)        => fail(e)
       }
     }
+
+    "leave young (<72h) rows alone even when the table is above the floor" in {
+      requireDb()
+      sql"DELETE FROM articles".update.run
+        .transact(Database.transactor).unsafeRunSync()
+      val seedSize = ArticleCleanupScheduler.MinArticleCount + 10
+      (1 to seedSize).foreach { i =>
+        repo.create(
+          ArticleCreate(
+            author      = Some("cleanup-window-spec"),
+            title       = s"window-spec-young-$i",
+            description = None,
+            url         = s"https://example.com/cleanup-window-spec/young/$i",
+            urlToImage  = None,
+            content     = None,
+            category    = Some("cleanup-window-spec")
+          )
+        ) shouldBe a[Right[_, _]]
+      }
+      // All rows are fresh by default (published_at = NOW() at insert time),
+      // so a cutoff of NOW() - 72h must delete none of them.
+      val cutoff = OffsetDateTime.now().minusHours(72)
+      repo.deletePublishedBefore(cutoff) match {
+        case Right(deleted) => deleted shouldBe 0
+        case Left(e)        => fail(e)
+      }
+      repo.count().toOption.get shouldBe seedSize
+    }
   }
 }
