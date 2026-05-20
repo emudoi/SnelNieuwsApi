@@ -289,9 +289,12 @@ class ArticleRepository(provideTransactor: => HikariTransactor[IO]) {
       val publishedAt = OffsetDateTime.parse(article.publishedAt)
       Right(
         sql"""
-          INSERT INTO articles (author, title, description, url, url_to_image, published_at, content, category, shared_categories)
+          INSERT INTO articles (author, title, description, url, url_to_image, published_at, content,
+                                category, shared_categories, country, shared_countries)
           VALUES (${article.author}, ${article.title}, ${article.description},
-                  ${article.url}, ${article.urlToImage}, $publishedAt, NULL, ${article.category}, ${article.sharedCategories})
+                  ${article.url}, ${article.urlToImage}, $publishedAt, NULL,
+                  ${article.category}, ${article.sharedCategories},
+                  ${article.country}, ${article.sharedCountries})
           ON CONFLICT (title) DO UPDATE SET
             author            = EXCLUDED.author,
             description       = EXCLUDED.description,
@@ -299,7 +302,9 @@ class ArticleRepository(provideTransactor: => HikariTransactor[IO]) {
             url_to_image      = EXCLUDED.url_to_image,
             published_at      = EXCLUDED.published_at,
             category          = EXCLUDED.category,
-            shared_categories = EXCLUDED.shared_categories
+            shared_categories = EXCLUDED.shared_categories,
+            country           = EXCLUDED.country,
+            shared_countries  = EXCLUDED.shared_countries
         """.update.run.transact(transactor).unsafeRunSync()
       )
     } catch {

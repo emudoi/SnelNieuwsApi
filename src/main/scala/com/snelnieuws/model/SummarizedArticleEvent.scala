@@ -17,7 +17,9 @@ case class SummarizedArticleExport(
   publishedAt: String,
   createdAt: Option[String],
   category: Option[String],
-  sharedCategories: Option[List[String]]
+  sharedCategories: Option[List[String]],
+  country: Option[String],
+  sharedCountries: Option[List[String]]
 )
 
 object SummarizedArticleExport {
