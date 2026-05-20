@@ -32,7 +32,13 @@ class NewsServletV3(
   notificationService: NotificationService,
   userService: UserService,
   appClientRepository: AppClientRepository,
-  firebaseVerifier: FirebaseTokenVerifier
+  firebaseVerifier: FirebaseTokenVerifier,
+  /** Used to resolve relative image paths (e.g. `/v2/images/...`) into
+    * absolute URLs in the v3 response — mirrors what `ArticleService.
+    * absolutiseStoredUrl` does for the v1/v2 paths. Without this, the
+    * apps' AsyncImage / Coil fail because `urlToImage` carries only a
+    * path with no host. */
+  imagesPublicBaseUrl: String
 ) extends ScalatraServlet
     with JacksonJsonSupport {
 
@@ -169,13 +175,22 @@ class NewsServletV3(
       title       = row.title,
       description = row.description,
       url         = row.url,
-      urlToImage  = row.urlToImage,
+      urlToImage  = absolutiseImage(row.urlToImage),
       publishedAt = publishedAtFmt.format(row.publishedAt),
       content     = row.content,
       category    = row.category,
       country     = row.country,
       is_local    = row.isLocal
     )
+
+  /** Stored values starting with `/` are server-relative paths from the
+    * v2 image-cache scheme (`/v2/images/...`); prepend the configured
+    * base URL so the response carries an absolute URL. Legacy absolute
+    * URLs flow through unchanged. Same logic as
+    * `ArticleService.absolutiseStoredUrl`. */
+  private def absolutiseImage(stored: Option[String]): Option[String] = stored.map { v =>
+    if (v.startsWith("/")) imagesPublicBaseUrl + v else v
+  }
 }
 
 // Top-level case classes so json4s emits stable field names without needing

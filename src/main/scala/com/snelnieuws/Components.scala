@@ -262,7 +262,8 @@ class Components(
       notificationService,
       userService,
       appClientRepository,
-      firebaseVerifier
+      firebaseVerifier,
+      imagesPublicBaseUrl
     )
   lazy val notificationDispatchServlet: NotificationDispatchServlet =
     new NotificationDispatchServlet(

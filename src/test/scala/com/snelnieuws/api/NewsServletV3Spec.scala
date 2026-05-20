@@ -29,6 +29,9 @@ class NewsServletV3Spec
          |notifications.api-key = "$testApiKey"
          |articles.cleanup.enabled = false
          |kafka.summarized-import.enabled = false
+         |# Non-empty so v3's urlToImage absolutisation test can assert
+         |# a fully-qualified URL on the wire.
+         |images.public-base-url = "https://test.example.com"
          |""".stripMargin
     )
     .withFallback(ConfigFactory.load())
@@ -104,7 +107,8 @@ class NewsServletV3Spec
     sharedCategories: List[String] = Nil,
     country: Option[String] = Some("nl"),
     sharedCountries: List[String] = Nil,
-    ageMinutes: Int = 0
+    ageMinutes: Int = 0,
+    urlToImage: Option[String] = None
   ): Long = {
     import doobie.implicits._
     import doobie.postgres.implicits._
@@ -120,7 +124,7 @@ class NewsServletV3Spec
                             content, category, shared_categories, country, shared_countries)
       VALUES ($v3Tag, $title, NULL,
               ${s"https://example.com/$v3Tag/${UUID.randomUUID()}"},
-              NULL, $publishedAt, NULL,
+              $urlToImage, $publishedAt, NULL,
               $category, $sharedCatsArr, $country, $sharedCntsArr)
       RETURNING id
     """.query[Long].unique.transact(Database.transactor).unsafeRunSync()
@@ -286,6 +290,39 @@ class NewsServletV3Spec
         status shouldBe 200
         field[Boolean](body, "has_more") shouldBe Some(false)
         field[String](body, "next_cursor") shouldBe None
+      }
+    }
+
+    "absolutise relative urlToImage paths (and leave absolute ones alone)" in {
+      requireDb()
+      wipeAllArticles()
+      // V2 image-cache scheme stores paths like /v2/images/aa/bb/<hash>.jpg.
+      // v3 must prepend imagesPublicBaseUrl so AsyncImage / Coil can fetch.
+      val relId = insertV3(
+        title = s"$v3Tag-rel-img",
+        country = Some("nl"),
+        urlToImage = Some("/v2/images/ab/cd/test.jpg")
+      )
+      val absId = insertV3(
+        title = s"$v3Tag-abs-img",
+        country = Some("nl"),
+        urlToImage = Some("https://elsewhere.example/foo.jpg")
+      )
+      get("/v3/feed", Map("country" -> "nl", "limit" -> "50"), gatedHeaders) {
+        status shouldBe 200
+        val parsed   = org.json4s.jackson.parseJson(body)
+        val articles = (parsed \ "articles").children
+        val byId = articles.map(a =>
+          (a \ "id").extract[String] -> (a \ "urlToImage").extractOpt[String]
+        ).toMap
+        // Relative path resolved through the configured public base URL.
+        // In tests, the base URL comes from reference.conf — assert the
+        // returned URL is absolute (has a scheme) and ends with the
+        // original path so we don't pin the exact base.
+        val resolved = byId(relId.toString).getOrElse("")
+        resolved should fullyMatch regex "^https?://.*/v2/images/ab/cd/test\\.jpg$"
+        // Already-absolute URLs flow through unchanged.
+        byId(absId.toString) shouldBe Some("https://elsewhere.example/foo.jpg")
       }
     }
 
