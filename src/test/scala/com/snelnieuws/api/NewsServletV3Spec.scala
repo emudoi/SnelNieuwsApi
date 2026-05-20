@@ -83,6 +83,16 @@ class NewsServletV3Spec
       .update.run.transact(Database.transactor).unsafeRunSync()
   }
 
+  /** Destructive wipe — used by tests that assert against the full
+    * response set (cursor pagination, is_local labeling, next_cursor=null).
+    * Other suites in this build seed their own articles, so a hard wipe
+    * here doesn't pollute them as long as we re-seed within the test. */
+  private def wipeAllArticles(): Unit = {
+    import doobie.implicits._
+    import cats.effect.unsafe.implicits.global
+    sql"DELETE FROM articles".update.run.transact(Database.transactor).unsafeRunSync()
+  }
+
   /** Direct DB insert so we can set `country` + `shared_countries` +
     * `shared_categories` — fields the ArticleCreate / ArticleService write
     * path doesn't surface yet. publishedAt is back-stamped per index so
@@ -145,25 +155,36 @@ class NewsServletV3Spec
       }
     }
 
-    "return only articles whose country matches OR shared_countries contains it" in {
+    "country labels is_local but never filters articles out (NULL-country rows still appear)" in {
       requireDb()
-      wipeV3Rows()
+      wipeAllArticles()
       val nlPrimary = insertV3(title = s"$v3Tag-primary-nl", country = Some("nl"))
       val beShared  = insertV3(title = s"$v3Tag-shared-be", country = Some("be"), sharedCountries = List("nl"))
       val deOnly    = insertV3(title = s"$v3Tag-de",        country = Some("de"))
+      val noCountry = insertV3(title = s"$v3Tag-untagged",  country = None)
 
       get("/v3/feed", Map("country" -> "nl", "limit" -> "50"), gatedHeaders) {
         status shouldBe 200
-        val ids = idsOf(body).toSet
-        ids should contain (nlPrimary.toString)
-        ids should contain (beShared.toString)
-        ids should not contain deOnly.toString
+        val parsed   = org.json4s.jackson.parseJson(body)
+        val articles = (parsed \ "articles").children
+        val byId = articles.map(a =>
+          (a \ "id").extract[String] -> (a \ "is_local").extract[Boolean]
+        ).toMap
+        // All four articles must be returned — country is a label, not a filter.
+        byId.keySet should contain allOf (
+          nlPrimary.toString, beShared.toString, deOnly.toString, noCountry.toString
+        )
+        // is_local labeling matches the request country.
+        byId(nlPrimary.toString) shouldBe true
+        byId(beShared.toString)  shouldBe true   // request country is in shared_countries
+        byId(deOnly.toString)    shouldBe false
+        byId(noCountry.toString) shouldBe false  // NULL country resolves via COALESCE
       }
     }
 
     "paginate via cursor — disjoint pages, has_more=false on last" in {
       requireDb()
-      wipeV3Rows()
+      wipeAllArticles()
       // 7 NL articles, monotonically older by ageMinutes so order is stable.
       val ids = (1 to 7).map { i =>
         insertV3(title = s"$v3Tag-page-$i", country = Some("nl"), ageMinutes = i)
@@ -219,7 +240,7 @@ class NewsServletV3Spec
 
     "category widening — match via shared_categories" in {
       requireDb()
-      wipeV3Rows()
+      wipeAllArticles()
       // category=world, shared_categories=[sports] — should appear under
       // a sports filter even though its primary category is world.
       val widened = insertV3(
@@ -240,7 +261,7 @@ class NewsServletV3Spec
 
     "is_local=true when article.country == request.country" in {
       requireDb()
-      wipeV3Rows()
+      wipeAllArticles()
       val nlPrimary = insertV3(title = s"$v3Tag-local", country = Some("nl"))
       val beShared  = insertV3(title = s"$v3Tag-shared", country = Some("be"), sharedCountries = List("nl"))
 
@@ -259,7 +280,7 @@ class NewsServletV3Spec
 
     "next_cursor is null when has_more is false" in {
       requireDb()
-      wipeV3Rows()
+      wipeAllArticles()
       insertV3(title = s"$v3Tag-only-one", country = Some("nl"))
       get("/v3/feed", Map("country" -> "nl", "limit" -> "50"), gatedHeaders) {
         status shouldBe 200
@@ -270,7 +291,7 @@ class NewsServletV3Spec
 
     "never serialize shared_categories or shared_countries" in {
       requireDb()
-      wipeV3Rows()
+      wipeAllArticles()
       insertV3(
         title = s"$v3Tag-no-leak",
         country = Some("nl"),
@@ -288,12 +309,23 @@ class NewsServletV3Spec
   "GET /v3/articles/:id" should {
     "return the single article with is_local set" in {
       requireDb()
-      wipeV3Rows()
+      wipeAllArticles()
       val id = insertV3(title = s"$v3Tag-by-id", country = Some("nl"))
       get(s"/v3/articles/$id", Map("country" -> "nl"), gatedHeaders) {
         status shouldBe 200
         field[String](body, "id") shouldBe Some(id.toString)
         field[Boolean](body, "is_local") shouldBe Some(true)
+      }
+    }
+
+    "return an article with NULL country as is_local=false" in {
+      requireDb()
+      wipeAllArticles()
+      val id = insertV3(title = s"$v3Tag-untagged-by-id", country = None)
+      get(s"/v3/articles/$id", Map("country" -> "nl"), gatedHeaders) {
+        status shouldBe 200
+        field[String](body, "id") shouldBe Some(id.toString)
+        field[Boolean](body, "is_local") shouldBe Some(false)
       }
     }
 

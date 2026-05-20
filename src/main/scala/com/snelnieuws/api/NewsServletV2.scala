@@ -236,6 +236,25 @@ class NewsServletV2(
     )
   }
 
+  /** IP-based country lookup for first-launch app onboarding. Reads the
+    * `CF-IPCountry` header set by Cloudflare's edge for every request
+    * coming through their network. Returns `{"country":"nl"}` (lowercase
+    * 2-letter) on success, or `{"country":""}` when:
+    *   - the header is absent (request didn't transit Cloudflare),
+    *   - the header is `XX` (Cloudflare's "unknown" sentinel),
+    *   - the value isn't a valid 2-letter code (defence in depth).
+    * Apps treat an empty response as "fall back to device locale" — no
+    * error UI is required for this path.
+    */
+  get("/geo/country") {
+    val raw = Option(request.getHeader("CF-IPCountry")).map(_.trim).getOrElse("")
+    val country = raw.toLowerCase match {
+      case s if s.matches("^[a-z]{2}$") && s != "xx" => s
+      case _                                          => ""
+    }
+    Map("country" -> country)
+  }
+
   // ─────────────────────────── Client registry ───────────────────────────
 
   /** Bootstrap route. iOS calls on first launch with the UUID it generated

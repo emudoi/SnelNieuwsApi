@@ -280,13 +280,16 @@ class ArticleRepository(provideTransactor: => HikariTransactor[IO]) {
 
   // ─────────────────────────────── v3 reads ───────────────────────────────
   //
-  // Country-scoped feed with cursor pagination. Caller passes the request
-  // country (already validated to be 2 lowercase letters). Rows match if
-  // `articles.country` equals it OR the request country appears in
-  // `articles.shared_countries`. Category filter is optional — when present,
-  // an article matches if its `category` is in the list OR its
-  // `shared_categories` array overlaps the list. Returns (page, hasMore)
-  // where `hasMore` is computed by fetching one extra row and checking.
+  // Cursor-paginated feed. The request country is a **labeling** input,
+  // not a filter — it produces the per-article `is_local` boolean (matches
+  // article.country OR appears in shared_countries) but never excludes
+  // rows. This keeps the apps from going blank while existing articles
+  // in the DB still carry NULL country / shared_countries.
+  //
+  // Category filter IS a filter — when present, an article matches if its
+  // `category` is in the list OR its `shared_categories` array overlaps
+  // the list. is_local uses COALESCE(..., FALSE) so NULL country resolves
+  // to false rather than NULL.
 
   def findV3(
     country: String,
@@ -299,9 +302,9 @@ class ArticleRepository(provideTransactor: => HikariTransactor[IO]) {
       val baseSelect = fr"""
         SELECT id, author, title, description, url, url_to_image,
                published_at, content, category, country,
-               (country = $country OR $country = ANY(shared_countries)) AS is_local
+               COALESCE(country = $country OR $country = ANY(shared_countries), FALSE) AS is_local
         FROM articles
-        WHERE (country = $country OR $country = ANY(shared_countries))
+        WHERE TRUE
       """
 
       val categoryFilter: Fragment =
@@ -340,7 +343,7 @@ class ArticleRepository(provideTransactor: => HikariTransactor[IO]) {
         sql"""
           SELECT id, author, title, description, url, url_to_image,
                  published_at, content, category, country,
-                 (country = $country OR $country = ANY(shared_countries)) AS is_local
+                 COALESCE(country = $country OR $country = ANY(shared_countries), FALSE) AS is_local
           FROM articles
           WHERE id = $id
         """.query[ArticleV3Row].option.transact(transactor).unsafeRunSync()
