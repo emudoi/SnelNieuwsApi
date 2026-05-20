@@ -16,7 +16,8 @@ case class SummarizedArticleExport(
   urlToImage: Option[String],
   publishedAt: String,
   createdAt: Option[String],
-  category: Option[String]
+  category: Option[String],
+  sharedCategories: Option[List[String]]
 )
 
 object SummarizedArticleExport {
